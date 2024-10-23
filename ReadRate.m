@@ -2,49 +2,35 @@ clc
 clear all
 close all
 
-s = serialport("COM3","38400","DataBits",8,"StopBits",1);
-configureTerminator(s,"CR");
+s = serialport("COM3","38400","DataBits",8,"StopBits",1); % Configure serial port connection
+configureTerminator(s,"CR/LF"); % Configure message send terminator characters
 
-% Read power
-%writeline(s,"N1,00");
-%power = readline(s);
+%multiTagTable = zeros(1,2); % Initialize array for storing tag ID's and read counts
+TagList = strings;
+counts = [];
 
+numSend = 10; % Number of times multitag cammand is sent to reader
 
-
-%%Read rate
-%start clock
-%start loop
-%send multi-tag read
-multiTagTable = zeros(1,2);
-
-for i = 1:20
-    multiTagRead = writeline(s,"U"); % Multi Tag EPC command writeline is used to send ASCII 
+for i = 1:numSend
+    writeline(s,"U"); % Multi Tag EPC command writeline is used to send ASCII 
     pause(0.1)  % delay to give time to serial command
 
-    % read serial response
-    readData = strings;
-    tagId = strings;
-    while s.NumBytesAvailable > 0
-        line = s.readline();
-        readData = [readData;line]; % Read returned tag ID's
-        tagId = readData(3:end);
-    end
-        tagIdIndex = find(multiTagTable == tagID);
-        if isempty(tagID_index)
-            table_entry = [1,tagID];
-            multiTagTable(end,1) = 1;
-            multiTagTable(end,2) = tagId;
+    while s.NumBytesAvailable > 0 % While there are bytes in the message received
+        line = s.readline(); 
+        %readData = [readData;line]; % store tag ID in readData
+        tagIDIndex = find(TagList == line,1);
+        if isempty(tagIDIndex)
+            TagList = [TagList;line];
+            counts = [counts; 1];
+        else
+            counts(tagIDIndex) = counts(tagIDIndex) + 1;
+
         end
-    %find tag id in second column of table
-    % if tag ID is in table
-        % first column in tag ID row incremented by 1
-    % if id is not in table, append new row to table, count = 1
-        newline = [1,tagID]
-        [multiTagTable]
-%create a table to store tag id's and read counts
+    end
+end
 
+disp("Tag List and Counts:")
+disp(table(TagList,counts))
 
-%create table: column 1 = numcounts, column = tag id
-%stop loop
-%stop clock
-%for specific tag, divide numcounts by time
+%Now we can perform a multitag read as many times as desired
+%TagList consists of string values of all tag IDs read
