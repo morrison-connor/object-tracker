@@ -1,31 +1,20 @@
 %%% Object tracker angle finder for demo purposes
+clear
 
 %% user inputs
-targetId = '3000E2806894000040319034C93BD2F2';
+tagId = '3000E2806894000040319034C93BD2F2';
 
 nMeasurements = 200;
 antennaCycles = 10;
 windowSize = 6;  % how many data points to use in moving average
-antennaPorts = [1 2];  % input antenna ports used ie. [1 2 4]
+antennaPorts = [1 4];  % input antenna ports used ie. [1 2 4]
 s = serialport('COM6', 38400);
 
 %% setup
-nAntennas = len(antennaPorts);
+nAntennas = length(antennaPorts);
 measurements = NaN(nAntennas, windowSize);
 weightedAvg = NaN(1, nAntennas);
 s.configureTerminator("CR/LF");
-
-
-
-    writeline(s,"U"); % Multi Tag EPC command writeline is used to send ASCII 
-    pause(0.1)  % delay to give time to serial command
-    readData = strings;
-    while s.NumBytesAvailable > 0 % While there are bytes in the message received
-        line = s.readline();
-        readData = [readData;line]; % store tag ID in readData
-    end
-
-
 
 %% main loop
 measurementNum = 0;
@@ -48,7 +37,7 @@ while(true)
                 case 4
                     cmd = ["N9,N22", "N9,10"];
             end
-            for ii = 1:len(cmd)
+            for ii = 1:length(cmd)
                s.writeline(cmd(1));  % Send 1st antenna switch command
                pause(0.1)
                s.readline();
