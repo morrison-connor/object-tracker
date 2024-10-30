@@ -18,8 +18,9 @@ s.configureTerminator("CR/LF");
 
 %% main loop
 measurementNum = 0;
-totalRead = zeros(1, 2);
 while(true)
+    totalSend = 0;
+    totalRead = zeros(1, 2);
     %input("Press any key to start")
     % 1. take a read ratio measurement
     disp("1. take a read ratio measurement")
@@ -57,12 +58,14 @@ while(true)
             for kk = 1:antennaCycles
                 % run RFID reader
                 readData = read_tags(s);
+                totalSend = totalSend + 1;
                 % check if target tag was detected
-                if any(contains(tagId, readData))  % looks for tagId in all returned data
+                if any(contains(readData, tagId))  % looks for tagId in all returned data
                     totalRead(jj) = totalRead(jj) + 1;
                 end
             end
-            fprintf("Total measurements = %d\n", sum(totalRead))
+            fprintf(['Total read: ' repmat(' %1.0f ',1,numel(totalRead)) '\n'],totalRead);
+            fprintf("Total signals sent = %d\n", totalSend)
         end
     end
 
@@ -95,5 +98,5 @@ while(true)
     else
         disp("Correct direction")
     end
-    pause(2);
+    pause(5);
 end
