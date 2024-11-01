@@ -8,7 +8,7 @@ nMeasurements = 100;
 antennaCycles = 10;
 windowSize = 6;  % how many data points to use in moving average
 antennaPorts = [1 2];  % input antenna ports used ie. [1 2 4]
-s = serialport('COM3', 38400);
+s = serialport('COM6', 38400);
 
 %% setup
 nAntennas = length(antennaPorts);
@@ -26,7 +26,6 @@ s.writeline("N9,20");
 N0cmd = "N9,10";
 N1cmd = "N9,11";
 s.writeline(N0cmd);
-
 
 %% main loop
 measurementNum = 0;
@@ -53,24 +52,15 @@ while(true)
                 case 4
                     cmd = ["N9,N22", "N9,10"];
             end
-            s.writeline(cmd);
-            check = s.readline();
-            while check ~= ("N"+string(antennaNum - 1))
+            check = "";
+            while ~strcmp(check, "N"+string(antennaNum - 1))
                 s.writeline(cmd)
+                pause(0.1);
                 check = s.readline();
+                check = char(check);
+                check = check(2:end);
             end
-
-%             for kk = 1:length(cmd)
-%                s.writeline(cmd(1));  % Send 1st antenna switch command
-%                pause(0.1)
-%                s.readline();
-%                pause(0.1);
-%                s.writeline(cmd(2));  % Send 2nd antenna switch command
-%                pause(0.1);
-%                s.readline();
-%                % do we need to switch antenna open??
-%                % <LF>N7,22<CR>, <LF>N7,11<CR>
-%             end
+            fprintf("antenna %d selected\n", antennaNum)
 
             % b. take measurements
             disp("b. take measurements")
