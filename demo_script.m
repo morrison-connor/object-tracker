@@ -7,14 +7,26 @@ tagId = '3000E2806894000040319034C93BD2F2';
 nMeasurements = 100;
 antennaCycles = 10;
 windowSize = 6;  % how many data points to use in moving average
-antennaPorts = [1 4];  % input antenna ports used ie. [1 2 4]
-s = serialport('COM6', 38400);
+antennaPorts = [1 2];  % input antenna ports used ie. [1 2 4]
+s = serialport('COM3', 38400);
 
 %% setup
 nAntennas = length(antennaPorts);
 measurements = NaN(nAntennas, windowSize);
 weightedAvg = NaN(1, nAntennas);
 s.configureTerminator("CR/LF");
+
+%% Initialize:
+% Open antenna ports N0 and N1:
+s.writeline("N7,20");
+s.writeline("N7,10");
+s.writeline("N7,11");
+% Commands for switching antennas:
+s.writeline("N9,20");
+N0cmd = "N9,10";
+N1cmd = "N9,11";
+s.writeline(N0cmd);
+
 
 %% main loop
 measurementNum = 0;
@@ -33,25 +45,32 @@ while(true)
             antennaNum = antennaPorts(jj);
             switch antennaNum
                 case 1
-                    cmd = ["N9,N20", "N9,10"];
+                    cmd = N0cmd;
                 case 2
-                    cmd = ["N9,N20", "N9,11"];
+                    cmd = N1cmd;
                 case 3
                     cmd = ["N9,N22", "N9,11"];
                 case 4
                     cmd = ["N9,N22", "N9,10"];
             end
-            for kk = 1:length(cmd)
-               s.writeline(cmd(1));  % Send 1st antenna switch command
-               pause(0.1)
-               s.readline();
-               pause(0.1);
-               s.writeline(cmd(2));  % Send 2nd antenna switch command
-               pause(0.1);
-               s.readline();
-               % do we need to switch antenna open??
-               % <LF>N7,22<CR>, <LF>N7,11<CR>
+            s.writeline(cmd);
+            check = s.readline();
+            while check ~= ("N"+string(antennaNum - 1))
+                s.writeline(cmd)
+                check = s.readline();
             end
+
+%             for kk = 1:length(cmd)
+%                s.writeline(cmd(1));  % Send 1st antenna switch command
+%                pause(0.1)
+%                s.readline();
+%                pause(0.1);
+%                s.writeline(cmd(2));  % Send 2nd antenna switch command
+%                pause(0.1);
+%                s.readline();
+%                % do we need to switch antenna open??
+%                % <LF>N7,22<CR>, <LF>N7,11<CR>
+%             end
 
             % b. take measurements
             disp("b. take measurements")
@@ -72,7 +91,7 @@ while(true)
     % 2. calculate the read ratio
     disp("2. calculate the read ratio")
     for jj = 1:nAntennas
-        readRatio = totalRead(jj) / nMeasurements;
+        readRatio = totalRead(jj) / (nMeasurements/nAntennas);
         fprintf("Antenna %d readRatio = %0.2f\n", antennaPorts(jj), readRatio)
 
         % weightedAvg across windowSize
