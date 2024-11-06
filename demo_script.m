@@ -8,13 +8,13 @@ card = '3000E2806894000040319034C93BD2F2';
 rect = '3000E280691500007003C56364E08DD3';
 square = '3400E280F3362000F00005E60D18E39C';
 
-tagId = square;
+tagId = rect;
 
-nMeasurements = 1000;
+nMeasurements = 400;
 antennaCycles = 100;
 windowSize = 6;  % how many data points to use in moving average
 antennaPorts = [1 2];  % input antenna ports used ie. [1 2 4]
-s = serialport('COM6', 38400);
+s = serialport('COM3', 38400);
 tolerance = 0.04;
 
 %% setup
@@ -34,6 +34,12 @@ s.writeline("N9,20");
 N0cmd = "N9,10";
 N1cmd = "N9,11";
 s.writeline(N0cmd);
+
+%% Calibration:
+A2factor = 0.67/0.54;
+cal_factor = [1 A2factor];
+cal_ratio = [1 1];
+
 
 %% main loop
 measurementNum = 0;
@@ -90,11 +96,12 @@ while(true)
     disp("2. calculate the read ratio")
     for jj = 1:nAntennas
         readRatio(jj) = totalRead(jj) / (nMeasurements/nAntennas);
+        cal_ratio(jj) = readRatio(jj)*cal_factor(jj);
         fprintf("Antenna %d readRatio = %0.2f\n", antennaPorts(jj), readRatio(jj))
     end
 
     fprintf("\n");
-    delta = readRatio(1) - readRatio(2);
+    delta = cal_ratio(1) - cal_ratio(2);
     if delta > tolerance
         disp("Turn Right")
     elseif delta < -tolerance
