@@ -2,18 +2,26 @@
 clear
 
 %% user inputs
-tagId = '3000E2806894000040319034C93BD2F2';
 
-nMeasurements = 100;
-antennaCycles = 10;
+% tag lookup
+card = '3000E2806894000040319034C93BD2F2';
+rect = '3000E280691500007003C56364E08DD3';
+square = '3400E280F3362000F00005E60D18E39C';
+
+tagId = square;
+
+nMeasurements = 1000;
+antennaCycles = 100;
 windowSize = 6;  % how many data points to use in moving average
 antennaPorts = [1 2];  % input antenna ports used ie. [1 2 4]
 s = serialport('COM6', 38400);
+tolerance = 0.04;
 
 %% setup
 nAntennas = length(antennaPorts);
 measurements = NaN(nAntennas, windowSize);
-weightedAvg = NaN(1, nAntennas);
+readRatio = NaN(1, nAntennas);
+
 s.configureTerminator("CR/LF");
 
 %% Initialize:
@@ -81,31 +89,19 @@ while(true)
     % 2. calculate the read ratio
     disp("2. calculate the read ratio")
     for jj = 1:nAntennas
-        readRatio = totalRead(jj) / (nMeasurements/nAntennas);
-        fprintf("Antenna %d readRatio = %0.2f\n", antennaPorts(jj), readRatio)
-
-        % weightedAvg across windowSize
-        if measurementNum < windowSize
-            measurements(jj, measurementNum) = readRatio;
-            weightedAvg(jj) = mean(measurements(jj, 1:measurementNum));
-        else
-            measurements(1:end-1) = measurements(2:end);
-            measurements(jj, end) = readRatio;
-            weightedAvg(jj) = mean(measurements(jj));
-        end
+        readRatio(jj) = totalRead(jj) / (nMeasurements/nAntennas);
+        fprintf("Antenna %d readRatio = %0.2f\n", antennaPorts(jj), readRatio(jj))
     end
 
-    % 3. use weightedAvg to determine position (for a 2 antenna system)
-    fprintf("Weighted Avg 1 = %0.2f\n", weightedAvg(1))
-    fprintf("Weighted Avg 2 = %0.2f\n", weightedAvg(2))
-    disp("3. use weightedAvg to determine position")
-    delta = weightedAvg(1) - weightedAvg(2);
-    if delta > 0
+    fprintf("\n");
+    delta = readRatio(1) - readRatio(2);
+    if delta > tolerance
         disp("Turn Right")
-    elseif delta < 0
+    elseif delta < -tolerance
         disp("Turn Left")
     else
         disp("Correct direction")
     end
-    pause(5);
+    pause(0.5);
+    fprintf("\n");
 end
