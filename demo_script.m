@@ -17,6 +17,8 @@ antennaPorts = [1 2];  % input antenna ports used ie. [1 2 4]
 s = serialport('COM3', 38400);
 tolerance = 0.04;
 
+calLogic = 1; %Set to 1 to run calibration and use the factor, set to 0 to skip calibration and use raw values
+
 %% setup
 nAntennas = length(antennaPorts);
 measurements = NaN(nAntennas, windowSize);
@@ -36,9 +38,60 @@ N1cmd = "N9,11";
 s.writeline(N0cmd);
 
 %% Calibration:
-A2factor = 0.67/0.54;
-cal_factor = [1 A2factor];
-cal_ratio = [1 1];
+if(calLogic==1)
+    disp("Calbration beginning")
+    calRead_ratio = NaN(1, nAntennas);
+    calSent = 0;
+    calRead = zeros(1,2);
+    
+    for ii = 1:floor(nMeasurements/(nAntennas*antennaCycles))
+        for jj = 1:nAntennas
+               
+               % a. switch antenna
+               disp("a. switch antenna")
+               antennaNum = antennaPorts(jj);
+               switch antennaNum
+                   case 1
+                       cmd = N0cmd;
+                   case 2
+                       cmd = N1cmd;
+               end            
+               check = "";
+               while ~strcmp(check, "N"+string(antennaNum - 1))
+                   s.writeline(cmd)
+                   pause(0.1);
+                   check = s.readline();
+                   check = char(check);
+                   check = check(2:end);
+               end
+               fprintf("antenna %d selected\n", antennaNum)
+    
+               % b. take measurements
+               disp("b. take measurements")
+               for kk = 1:antennaCycles
+                   % run RFID reader
+                   readData = read_tags(s);
+                   calSent = calSent + 1;
+                   % check if target tag was detected
+                   if any(contains(readData, tagId))  % looks for tagId in all returned data
+                       calRead(jj) = calRead(jj) + 1;
+                   end
+               end
+               fprintf(['Total read: ' repmat(' %1.0f ',1,numel(calRead)) '\n'],calRead);
+               fprintf("Total signals sent = %d\n", calSent)
+        end
+    end
+    disp("2. calculate the read ratio")
+    for jj = 1:nAntennas
+        calRead_ratio(jj) = calRead(jj) / (nMeasurements/nAntennas);
+    end
+    
+    A2factor = calRead_ratio(1)/calRead_ratio(2);
+    fprintf("Antenna 2 Calibration Factor = %d\n", A2factor)
+    cal_factor = [1 A2factor];
+    cal_ratio = [1 1];
+    % calLogic = 1;
+end
 
 
 %% main loop
@@ -96,12 +149,17 @@ while(true)
     disp("2. calculate the read ratio")
     for jj = 1:nAntennas
         readRatio(jj) = totalRead(jj) / (nMeasurements/nAntennas);
+        fprintf("Antenna %d Raw readRatio = %0.2f\n", antennaPorts(jj), readRatio(jj))
         cal_ratio(jj) = readRatio(jj)*cal_factor(jj);
-        fprintf("Antenna %d readRatio = %0.2f\n", antennaPorts(jj), readRatio(jj))
+        fprintf("Antenna %d Calibrated readRatio = %0.2f\n", antennaPorts(jj), cal_ratio(jj))
     end
 
     fprintf("\n");
-    delta = cal_ratio(1) - cal_ratio(2);
+    if (calLogic == 1)
+        delta = cal_ratio(1) - cal_ratio(2);
+    else
+        delta = readRatio(1) - readRatio(2);
+    end
     if delta > tolerance
         disp("Turn Right")
     elseif delta < -tolerance
