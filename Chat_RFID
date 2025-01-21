@@ -1,0 +1,54 @@
+# GENERATE WAVEFORM
+import numpy as np
+
+# RFID signal parameters
+fs = 1e6  # Sampling rate in Hz
+bit_rate = 40e3  # Bit rate for Gen2 protocol (e.g., 40 kHz)
+symbol_length = int(fs / bit_rate)  # Samples per symbol
+
+# Gen2 Query command (example bits, adjust as per protocol)
+query_bits = [1, 0, 1, 1, 0, 0, 1, 0]
+
+# ASK modulation: 1 -> High amplitude, 0 -> Low amplitude
+high_amp = 1.0
+low_amp = 0.0
+waveform = np.array([], dtype=np.float32)
+
+for bit in query_bits:
+    amplitude = high_amp if bit == 1 else low_amp
+    waveform = np.append(waveform, amplitude * np.ones(symbol_length))
+
+# Create a carrier wave
+carrier_freq = 915e6  # Carrier frequency in Hz (adjust for your region)
+t = np.arange(len(waveform)) / fs
+carrier = np.cos(2 * np.pi * carrier_freq * t)
+
+# Modulate the carrier with the waveform
+transmit_signal = waveform * carrier
+
+
+# TRANSMIT WAVEFORM
+import adi
+
+# Initialize PlutoSDR
+sdr = adi.Pluto()
+
+# Set SDR parameters
+sdr.tx_enabled_channels = [0]
+sdr.tx_rf_bandwidth = int(fs)
+sdr.tx_lo = int(carrier_freq)
+sdr.tx_hardwaregain_chan0 = -10  # Adjust transmit power in dB
+
+# Transmit the signal
+sdr.tx([transmit_signal])
+
+
+# RECEIVE RESPONSE
+# Set SDR receive parameters
+sdr.rx_enabled_channels = [0]
+sdr.rx_lo = int(carrier_freq)
+sdr.rx_rf_bandwidth = int(fs)
+sdr.rx_buffer_size = 1024
+
+# Receive signal
+received_signal = sdr.rx()
