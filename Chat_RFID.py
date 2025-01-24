@@ -30,10 +30,10 @@ def receive_signal(sdr, carrier_freq, fs, buf_len):
     sdr.rx_buffer_size = buf_len
     return sdr.rx(), np.arange(buf_len)
 
-def plot_signals(t, transmit_signal, received_signal, fs):
+def plot_signals(tx_t, transmit_signal, rx_t, received_signal, fs):
     plt.figure(figsize=(12, 8))
     plt.subplot(4, 1, 1)
-    plt.plot(t, transmit_signal, label="Transmit Signal", color="purple")
+    plt.plot(tx_t, transmit_signal, label="Transmit Signal", color="purple")
     plt.title("Time Domain")
     plt.xlabel("Time (s)")
     plt.ylabel("Amplitude")
@@ -50,8 +50,8 @@ def plot_signals(t, transmit_signal, received_signal, fs):
     plt.grid()
 
     plt.subplot(4, 1, 3)
-    plt.plot(received_signal.real, label="Real", color="blue")
-    plt.plot(received_signal.imag, label="Imaginary", color="red", linestyle="--")
+    plt.plot(rx_t, received_signal.real, label="Real", color="blue")
+    plt.plot(rx_t, received_signal.imag, label="Imaginary", color="red", linestyle="--")
     plt.plot(np.abs(received_signal), label="Absolute Value", color="purple", linestyle="-.")
     plt.title("Time Domain Received Signal")
     plt.xlabel("Time (s)")
@@ -59,6 +59,7 @@ def plot_signals(t, transmit_signal, received_signal, fs):
     plt.legend()
     plt.grid()
 
+    freq = np.fft.fftfreq(len(received_signal), d=1/fs)
     fft_signal_rx = np.fft.fft(received_signal)
     plt.subplot(4, 1, 4)
     plt.plot(freq[:int(fs)//2], np.abs(fft_signal_rx[:int(fs)//2]))
@@ -77,10 +78,10 @@ carrier_freq = 915e6
 query_bits = [1, 0, 1, 1, 0, 0, 1, 0]
 
 waveform = generate_waveform(query_bits, fs, bit_rate)
-transmit_signal, t = modulate_waveform(waveform, carrier_freq, fs)
+tx_signal, tx_t = modulate_waveform(waveform, carrier_freq, fs)
 
 sdr = adi.ad9361(uri='ip:192.168.2.1')
-transmit_signal(sdr, transmit_signal, carrier_freq, fs)
+transmit_signal(sdr, tx_signal, carrier_freq, fs)
 
-received_signal, rx_t = receive_signal(sdr, carrier_freq, fs, 2**16)
-plot_signals(t, transmit_signal, received_signal, fs)
+rx_signal, rx_t = receive_signal(sdr, carrier_freq, fs, 2**16)
+plot_signals(tx_t, tx_signal, rx_t, rx_signal, fs)
