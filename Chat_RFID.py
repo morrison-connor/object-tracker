@@ -20,7 +20,9 @@ for bit in query_bits:
 
 # Create a carrier wave
 carrier_freq = 915e6  # Carrier frequency in Hz (adjust for your region)
-t = np.arange(len(waveform)) / fs
+N = len(waveform)
+ts = 1 / float(fs)
+t = np.arange(0, N * ts, ts)
 carrier = np.cos(2 * np.pi * carrier_freq * t)
 
 # Modulate the carrier with the waveform
@@ -31,16 +33,16 @@ transmit_signal = waveform * carrier
 import adi
 
 # Initialize PlutoSDR
-sdr = adi.Pluto()
+sdr = adi.ad9361(uri='ip:192.168.2.1')
 
 # Set SDR parameters
-sdr.tx_enabled_channels = [0]
+#sdr.tx_enabled_channels = [0]
 sdr.tx_rf_bandwidth = int(fs)
 sdr.tx_lo = int(carrier_freq)
 sdr.tx_hardwaregain_chan0 = -10  # Adjust transmit power in dB
 
 # Transmit the signal
-sdr.tx([transmit_signal])
+sdr.tx([transmit_signal, transmit_signal])
 
 
 # RECEIVE RESPONSE
@@ -52,3 +54,4 @@ sdr.rx_buffer_size = 1024
 
 # Receive signal
 received_signal = sdr.rx()
+print(received_signal)
