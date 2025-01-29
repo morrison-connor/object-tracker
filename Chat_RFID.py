@@ -90,8 +90,8 @@ def fm0_decode(received_signal, fs, bit_rate):
         decoded_bits.append(bits[i])
     return decoded_bits
 
-def extract_epc(decoded_bits):
-    """Extracts the EPC data from the decoded tag response."""
+def extract_rn16(decoded_bits):
+    """Extracts the RN16 data from the decoded tag response."""
     preamble = [1, 0, 1, 0]
     index = -1
     for i in range(len(decoded_bits) - len(preamble)):
@@ -109,7 +109,7 @@ def receive_and_process_signal(sdr, fs, bit_rate):
     filtered_signal = apply_bandpass_filter(raw_signal, 100e3, 400e3, fs)
     envelope = envelope_detection(filtered_signal)
     decoded_bits = fm0_decode(envelope, fs, bit_rate)
-    epc_data = extract_epc(decoded_bits)
+    epc_data = extract_rn16(decoded_bits)
     return epc_data
 
 def generic_signal_plot(title, signal):
@@ -136,46 +136,6 @@ def generic_signal_plot(title, signal):
     plt.tight_layout()
     plt.show()
 
-def plot_signals(tx_t, tx_signal, rx_t, rx_signal, fs):
-    plt.figure(figsize=(12, 8))
-    plt.subplot(4, 1, 1)
-    plt.plot(tx_t, tx_signal, color="purple")
-    plt.title("Tx Signal - Time")
-    plt.xlabel("Time (s)")
-    plt.ylabel("Amplitude")
-    plt.legend()
-    plt.grid()
-
-    freq = np.fft.fftfreq(len(tx_signal), d=1/fs)
-    fft_signal = np.fft.fft(tx_signal)
-    plt.subplot(4, 1, 2)
-    plt.plot(freq[:int(fs)//2], np.abs(fft_signal[:int(fs)//2]))
-    plt.title("Tx Signal - Frequency")
-    plt.xlabel("Frequency (Hz)")
-    plt.ylabel("Magnitude")
-    plt.grid()
-
-    plt.subplot(4, 1, 3)
-    plt.plot(rx_t, rx_signal.real, label="Real", color="blue")
-    plt.plot(rx_t, rx_signal.imag, label="Imaginary", color="red", linestyle="--")
-    plt.plot(rx_t, np.abs(rx_signal), label="Absolute Value", color="purple", linestyle="-.")
-    plt.title("Rx Signal - Time")
-    plt.xlabel("Time (s)")
-    plt.ylabel("Amplitude")
-    plt.legend()
-    plt.grid()
-
-    freq = np.fft.fftfreq(len(rx_signal), d=1/fs)
-    fft_signal_rx = np.fft.fft(rx_signal)
-    plt.subplot(4, 1, 4)
-    plt.plot(freq[:int(fs)//2], np.abs(fft_signal_rx[:int(fs)//2]))
-    plt.title("Rx Signal - Frequency")
-    plt.xlabel("Frequency (Hz)")
-    plt.ylabel("Magnitude")
-    plt.grid()
-
-    plt.tight_layout()
-    plt.show()
 
 # Parameters
 fs = 1e6  # sample rate
@@ -209,12 +169,7 @@ time.sleep(0.01)  # allow time for tag to respond
 sdr.rx_enabled_channels = [0]  # TODO only using one channel for now
 sdr.rx_lo = int(carrier_freq)
 sdr.rx_rf_bandwidth = int(fs)
-epc_data = receive_and_process_signal(sdr, fs, bit_rate)
-if epc_data:
-    print("Detected EPC Data:", ''.join(map(str, epc_data)))
+rn16 = receive_and_process_signal(sdr, fs, bit_rate)
+print("Detected RN16:", ''.join(map(str, rn16)))
 
-# Time vectors for plotting
-#tx_t = np.linspace(0, (len(tx_signal) - 1) / fs, len(tx_signal))
-#rx_t = np.linspace(0, (len(rx_signal) - 1) / fs, len(rx_signal))
 
-#plot_signals(tx_t, tx_signal, rx_t, rx_signal, fs)
