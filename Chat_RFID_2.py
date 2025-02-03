@@ -78,7 +78,6 @@ def receive_rn16_pluto(center_freq=915e6, sample_rate=1e6, gain=40, capture_time
     Returns:
         np.array: Captured raw signal samples.
     """
-    # Initialize PlutoSDR for receiving
     sdr = adi.ad9361(uri='ip:192.168.2.1')
 
     # Configure SDR settings
@@ -94,45 +93,25 @@ def receive_rn16_pluto(center_freq=915e6, sample_rate=1e6, gain=40, capture_time
     print("RN16 Response Captured!")
     return raw_signal
 
-def detect_preamble(signal, sampling_rate, bit_rate, threshold=None):
+def detect_preamble(decoded_bits):
     """
-    Detects the FM0 preamble in an RFID response.
+    Detects the FM0 preamble in the decoded binary sequence.
 
     Args:
-        signal (np.array): The received signal (amplitude values).
-        sampling_rate (float): The sample rate of the SDR in Hz.
-        bit_rate (float): The expected RFID bit rate in Hz.
-        threshold (float, optional): Threshold for distinguishing between high and low states. Auto-calculated if None.
+        decoded_bits (list): The binary sequence after thresholding.
 
     Returns:
         int: Index of the preamble start, or -1 if not found.
     """
-    # Normalize and threshold signal
-    signal = np.array(signal)
-    if threshold is None:
-        threshold = (np.max(signal) + np.min(signal)) / 2
-    binary_signal = (signal > threshold).astype(int)
-
-    # Expected FM0 preamble pattern for EPC Gen2 (example: 1010 or 1100)
-    expected_preamble = [1, 0, 1, 0]  # Adjust if needed
-
-    # Detect transitions using peak detection
-    bit_period = int(sampling_rate / bit_rate)
-    peaks, _ = find_peaks(binary_signal, distance=bit_period//2)
-    valleys, _ = find_peaks(-binary_signal, distance=bit_period//2)
-    transitions = np.sort(np.concatenate((peaks, valleys)))
-
-    # Try to match the expected preamble pattern
-    for i in range(len(transitions) - len(expected_preamble) + 1):
-        segment = binary_signal[transitions[i]:transitions[i + len(expected_preamble)]]
-        if list(segment[:len(expected_preamble)]) == expected_preamble:
-            return transitions[i]  # Return start index of preamble
-
+    preamble = [1, 0, 1, 0]  # FM0 preamble pattern
+    for i in range(len(decoded_bits) - len(preamble) + 1):
+        if decoded_bits[i:i+4] == preamble:
+            return i + 4  # Return start of RN16 (after preamble)
     return -1  # Preamble not found
 
 def fm0_decode(signal, sample_rate, bit_rate=64e3, threshold=None):
     """
-    FM0 decodes the received RFID RN16 or EPC response.
+    FM0 decodes an RFID RN16 response after preamble detection.
 
     Args:
         signal (np.array): Received signal samples.
@@ -143,20 +122,11 @@ def fm0_decode(signal, sample_rate, bit_rate=64e3, threshold=None):
     Returns:
         list: Decoded binary sequence.
     """
-    # Detect preamble to align decoding
-    preamble_start = detect_preamble(signal, sample_rate, bit_rate, threshold)
-    if preamble_start == -1:
-        print("Preamble not found. Decoding may be inaccurate.")
-        preamble_start = 0  # Default to start of signal if preamble is missing
-
-    # Auto-thresholding if not provided
     if threshold is None:
         threshold = (np.max(signal) + np.min(signal)) / 2
 
-    # Convert signal to binary
     binary_signal = (signal > threshold).astype(int)
 
-    # Detect transitions using peak detection
     bit_period = int(sample_rate / bit_rate)
     peaks, _ = find_peaks(binary_signal, distance=bit_period//2)
     valleys, _ = find_peaks(-binary_signal, distance=bit_period//2)
@@ -176,25 +146,25 @@ def fm0_decode(signal, sample_rate, bit_rate=64e3, threshold=None):
 
     return decoded_bits
 
-
 def extract_rn16(decoded_bits):
     """
-    Extracts the RN16 and CRC from the FM0-decoded bits.
+    Extracts RN16 and CRC from the decoded bits after preamble alignment.
 
     Args:
-        decoded_bits (list): Binary sequence from FM0 decoding.
+        decoded_bits (list): FM0-decoded binary sequence.
 
     Returns:
         tuple: (RN16, CRC-16)
     """
-    if len(decoded_bits) < 32:  # RN16 (16 bits) + CRC (16 bits)
-        print("Error: Incomplete RN16 response!")
+    preamble_start = detect_preamble(decoded_bits)
+    if preamble_start == -1:
+        print("Error: Preamble not found!")
         return None, None
 
-    rn16 = decoded_bits[:16]  # Extract RN16 (first 16 bits)
-    crc = decoded_bits[16:32]  # Extract CRC-16 (next 16 bits)
+    rn16 = decoded_bits[preamble_start:preamble_start + 16]
+    crc16 = decoded_bits[preamble_start + 16:preamble_start + 32]
 
-    return rn16, crc
+    return rn16, crc16
 
 def compute_crc16(data_bits):
     """
