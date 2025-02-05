@@ -21,20 +21,19 @@ def transmit_query_pluto(query_bits, center_freq=915e6, sample_rate=30e6, gain=-
     sdr = adi.ad9361(uri='ip:192.168.2.1')
 
     # Configure PlutoSDR
+    sdr.sample_rate = int(sample_rate)  # Set sample rate
     sdr.tx_lo = int(center_freq)  # Set transmission frequency (915 MHz for UHF RFID)
     sdr.tx_hardwaregain_chan0 = gain  # Adjust TX gain
-    sdr.sample_rate = int(sample_rate)  # Set sample rate
 
     # Generate the PIE waveform for the Query command
     waveform = encode_pie(query_bits, sample_rate)
 
-    ts = 1 / float(sample_rate)
-    N = 1024
-    t = np.arange(0, N * ts, ts)
-    i = waveform * np.cos(2 * np.pi * t * center_freq) * 2 ** 14
-    q = waveform * np.sin(2 * np.pi * t * center_freq) * 2 ** 14
-    iq = i + 1j * q
-
+    # ts = 1 / float(sample_rate)
+    # N = 1024
+    # t = np.arange(0, N * ts, ts)
+    # i = waveform * np.cos(2 * np.pi * t * center_freq) * 2 ** 14
+    # q = waveform * np.sin(2 * np.pi * t * center_freq) * 2 ** 14
+    # iq = i + 1j * q
 
     if debug:
         plot_generic_signal("PIE Encoded Query TX", waveform)
@@ -48,7 +47,7 @@ def transmit_query_pluto(query_bits, center_freq=915e6, sample_rate=30e6, gain=-
 
     # Allow transmission for a brief period
     
-    time.sleep(0.05)  # Transmit for 50ms    
+    time.sleep(0.1)  # Transmit for 100ms    
     sdr.tx_destroy_buffer()  # Stop transmission
 
     print("Query command transmitted.")
@@ -111,12 +110,16 @@ def fm0_decode(signal, sample_rate, bit_rate=40e3, threshold=None):
     Returns:
         list: Decoded binary sequence.
     """
+    demod_signal = np.abs(signal)
     if threshold is None:
-        threshold = (np.max(signal) + np.min(signal)) / 2
+        threshold = (np.max(demod_signal) + np.min(demod_signal)) / 2
 
-    binary_signal = (signal > threshold).astype(int)
+    binary_signal = (demod_signal > threshold).astype(int)
 
     bit_period = int(sample_rate / bit_rate)
+    peaks, _ = find_peaks(binary_signal, distance=bit_period//2)
+    valleys, _ = find_peaks(-binary_signal, distance=bit_period//2)
+    transitions = np.sort(np.concatenate((peaks, valleys)))
 
     # Detect all transitions
     transitions = np.where(np.diff(binary_signal) != 0)[0]
@@ -261,7 +264,7 @@ def transmit_ack_pluto(rn16, center_freq=915e6, sample_rate=30e6, gain=-10):
     sdr.tx([waveform, waveform])  # Send waveform
 
     # Allow transmission for a brief period
-    time.sleep(0.05)  # Transmit for 50ms
+    time.sleep(0.1)  # Transmit for 100ms
     sdr.tx_destroy_buffer()  # Stop transmission
 
     print("ACK command transmitted.")
@@ -404,7 +407,7 @@ def plot_received_signal(signal, sample_rate, bit_rate=40e3):
 # **Main Execution:**
 
 # Step 1: Transmit query command
-query_command = [1, 0, 1, 1, 0, 0, 1, 0]  # Example Query command
+query_command = [1, 0, 1, 1, 0, 0, 1, 0]  # Example Query command TODO check if correct
 transmit_query_pluto(query_command)
 
 # Step 2: Capture RN16 response
