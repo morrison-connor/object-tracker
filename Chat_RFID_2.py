@@ -1,39 +1,13 @@
 import numpy as np
 import adi
 import time
+import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 
-def encode_pie(query_bits, sample_rate=1e6, tari=12.5e-6):
-    """
-    Encodes an EPC Gen2 Query command using Pulse Interval Encoding (PIE).
+global debug
+debug = False
 
-    Args:
-        query_bits (list): The binary Query command to encode.
-        sample_rate (float): The SDR sample rate in Hz (default 1 MHz).
-        tari (float): Reference time interval (default 12.5 µs).
-
-    Returns:
-        np.array: Encoded waveform (ASK-modulated).
-    """
-    short_pulse = int(sample_rate * tari)  # Short duration for PIE
-    long_pulse = 2 * short_pulse  # Long duration is twice short duration
-
-    waveform = []
-
-    for bit in query_bits:
-        if bit == 0:
-            # Data-0: Short high, Long low
-            waveform.extend([1.0] * short_pulse)  # High pulse
-            waveform.extend([0.0] * long_pulse)  # Low pulse
-        else:
-            # Data-1: Long high, Short low
-            waveform.extend([1.0] * long_pulse)  # High pulse
-            waveform.extend([0.0] * short_pulse)  # Low pulse
-
-    # Convert to complex format for PlutoSDR transmission
-    return np.array(waveform, dtype=np.complex64)
-
-def transmit_query_pluto(query_bits, center_freq=915e6, sample_rate=1e6, gain=-10):
+def transmit_query_pluto(query_bits, center_freq=915e6, sample_rate=30e6, gain=-10):
     """
     Transmits an EPC Gen2 Query command using PlutoSDR.
 
@@ -54,18 +28,33 @@ def transmit_query_pluto(query_bits, center_freq=915e6, sample_rate=1e6, gain=-1
     # Generate the PIE waveform for the Query command
     waveform = encode_pie(query_bits, sample_rate)
 
+    ts = 1 / float(sample_rate)
+    N = 1024
+    t = np.arange(0, N * ts, ts)
+    i = waveform * np.cos(2 * np.pi * t * center_freq) * 2 ** 14
+    q = waveform * np.sin(2 * np.pi * t * center_freq) * 2 ** 14
+    iq = i + 1j * q
+
+
+    if debug:
+        plot_generic_signal("PIE Encoded Query TX", waveform)
+
+    # TODO test if we need to do modulation?
+
     # Transmit the waveform
     sdr.tx_cyclic_buffer = True  # Enable cyclic transmission
+
     sdr.tx([waveform, waveform])  # Send waveform (both channels enabled)
 
     # Allow transmission for a brief period
-    time.sleep(0.05)  # Transmit for 50ms
+    
+    time.sleep(0.05)  # Transmit for 50ms    
     sdr.tx_destroy_buffer()  # Stop transmission
 
     print("Query command transmitted.")
 
 
-def receive_rn16_pluto(center_freq=915e6, sample_rate=1e6, gain=40, capture_time=0.02):
+def receive_rn16_pluto(center_freq=915e6, sample_rate=30e6, gain=20, capture_time=0.02):
     """
     Receives the RN16 response from an RFID tag using PlutoSDR.
 
@@ -109,7 +98,7 @@ def detect_preamble(decoded_bits):
             return i + 4  # Return start of RN16 (after preamble)
     return -1  # Preamble not found
 
-def fm0_decode(signal, sample_rate, bit_rate=64e3, threshold=None):
+def fm0_decode(signal, sample_rate, bit_rate=40e3, threshold=None):
     """
     FM0 decodes an RFID RN16 response after preamble detection.
 
@@ -128,20 +117,19 @@ def fm0_decode(signal, sample_rate, bit_rate=64e3, threshold=None):
     binary_signal = (signal > threshold).astype(int)
 
     bit_period = int(sample_rate / bit_rate)
-    peaks, _ = find_peaks(binary_signal, distance=bit_period//2)
-    valleys, _ = find_peaks(-binary_signal, distance=bit_period//2)
-    transitions = np.sort(np.concatenate((peaks, valleys)))
 
-    # Decode FM0
+    # Detect all transitions
+    transitions = np.where(np.diff(binary_signal) != 0)[0]
+
     decoded_bits = []
-    previous_bit = 1  # FM0 always starts with a known state
+    previous_bit = 1  # Start assumption
 
     for i in range(len(transitions) - 1):
         duration = transitions[i + 1] - transitions[i]
         if duration >= bit_period:
-            decoded_bits.append(previous_bit)  # Long duration means no mid-bit transition
+            decoded_bits.append(previous_bit)  # Long period = same bit
         else:
-            decoded_bits.append(1 - previous_bit)  # Short duration means mid-bit transition
+            decoded_bits.append(1 - previous_bit)  # Short period = bit flip
         previous_bit = decoded_bits[-1]
 
     return decoded_bits
@@ -218,7 +206,7 @@ def generate_ack_command(rn16):
     ack_prefix = [0, 1]  # 2-bit ACK command header
     return ack_prefix + rn16  # Concatenate header with RN16
 
-def encode_pie(command_bits, sample_rate=1e6, tari=12.5e-6):
+def encode_pie(command_bits, sample_rate=30e6, tari=12.5e-6, high=2**14, low=0):
     """
     Encodes an EPC Gen2 command using Pulse Interval Encoding (PIE).
 
@@ -236,15 +224,15 @@ def encode_pie(command_bits, sample_rate=1e6, tari=12.5e-6):
     waveform = []
     for bit in command_bits:
         if bit == 0:
-            waveform.extend([1.0] * short_pulse)  # Short high
-            waveform.extend([0.0] * long_pulse)  # Long low
+            waveform.extend([high] * short_pulse)  # Short high
+            waveform.extend([low] * long_pulse)  # Long low
         else:
-            waveform.extend([1.0] * long_pulse)  # Long high
-            waveform.extend([0.0] * short_pulse)  # Short low
+            waveform.extend([high] * long_pulse)  # Long high
+            waveform.extend([low] * short_pulse)  # Short low
 
     return np.array(waveform, dtype=np.complex64)
 
-def transmit_ack_pluto(rn16, center_freq=915e6, sample_rate=1e6, gain=-10):
+def transmit_ack_pluto(rn16, center_freq=915e6, sample_rate=30e6, gain=-10):
     """
     Transmits an EPC Gen2 ACK command using PlutoSDR.
 
@@ -278,7 +266,7 @@ def transmit_ack_pluto(rn16, center_freq=915e6, sample_rate=1e6, gain=-10):
 
     print("ACK command transmitted.")
 
-def receive_epc_pluto(center_freq=915e6, sample_rate=1e6, gain=40, capture_time=0.02):
+def receive_epc_pluto(center_freq=915e6, sample_rate=30e6, gain=20, capture_time=0.02):
     """
     Receives the EPC response from an RFID tag using PlutoSDR.
 
@@ -328,30 +316,6 @@ def extract_epc(decoded_bits):
 
     return pc, epc, crc
 
-def compute_crc16(data_bits):
-    """
-    Computes CRC-16 for validation.
-
-    Args:
-        data_bits (list): Data bits to compute CRC on.
-
-    Returns:
-        list: Computed CRC-16.
-    """
-    crc = 0xFFFF  # EPC Gen2 CRC-16 starts at 0xFFFF
-    poly = 0x1021  # x^16 + x^12 + x^5 + 1
-
-    for bit in data_bits:
-        crc ^= (bit << 15)
-        for _ in range(8):
-            if crc & 0x8000:
-                crc = (crc << 1) ^ poly
-            else:
-                crc <<= 1
-            crc &= 0xFFFF  # Keep CRC in 16-bit range
-
-    return [int(b) for b in f"{crc:016b}"]
-
 def validate_epc(epc_bits, received_crc):
     """
     Validates EPC by checking CRC-16.
@@ -366,6 +330,77 @@ def validate_epc(epc_bits, received_crc):
     computed_crc = compute_crc16(epc_bits)
     return computed_crc == received_crc
 
+def plot_generic_signal(title, signal, sample_rate=30e6):
+    t = np.linspace(0, (len(signal) - 1) / sample_rate, len(signal))
+
+    plt.figure(figsize=(12, 8))
+    plt.subplot(2, 1, 1)
+    plt.plot(t, signal, color="purple")
+    plt.title(title + " - Time Domain")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Amplitude")
+    plt.legend()
+    plt.grid()
+
+    freq = np.fft.fftfreq(len(signal), d=1/sample_rate)
+    fft_signal = np.fft.fft(signal)
+    plt.subplot(2, 1, 2)
+    plt.plot(freq[:int(sample_rate)//2], np.abs(fft_signal[:int(sample_rate)//2]))
+    plt.title(title + " - Frequency Domain")
+    plt.xlabel("Frequency (Hz)")
+    plt.ylabel("Magnitude")
+    plt.grid()
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_received_signal(signal, sample_rate, bit_rate=40e3):
+    """
+    Plots the raw RFID signal, thresholded binary signal, and detected transitions.
+
+    Args:
+        signal (np.array): The raw received signal.
+        sample_rate (float): The SDR sample rate.
+        bit_rate (float): Expected RFID bit rate (default 64 kbps).
+    """
+    # Convert complex signal to amplitude
+    signal_amplitude = np.abs(signal)
+
+    # Auto-thresholding
+    threshold = (np.max(signal_amplitude) + np.min(signal_amplitude)) / 2
+    binary_signal = (signal_amplitude > threshold).astype(int)
+
+    # Detect transitions
+    bit_period = int(sample_rate / bit_rate)
+    peaks, _ = find_peaks(binary_signal, distance=bit_period//2)
+    valleys, _ = find_peaks(-binary_signal, distance=bit_period//2)
+    transitions = np.sort(np.concatenate((peaks, valleys)))
+
+    # Plot raw signal
+    plt.figure(figsize=(12, 6))
+    plt.subplot(2, 1, 1)
+    plt.plot(signal_amplitude, label="Raw Signal", color="blue", alpha=0.7)
+    plt.axhline(y=threshold, color='red', linestyle='--', label="Threshold")
+    plt.scatter(transitions, signal_amplitude[transitions], color='green', marker='o', label="Transitions")
+    plt.title("Raw RFID Signal (Amplitude)")
+    plt.xlabel("Sample Index")
+    plt.ylabel("Amplitude")
+    plt.legend()
+    plt.grid()
+
+    # Plot thresholded binary signal
+    plt.subplot(2, 1, 2)
+    plt.plot(binary_signal, label="Binary Signal", drawstyle="steps-pre", color="black")
+    plt.scatter(transitions, binary_signal[transitions], color='red', marker='o', label="Transitions")
+    plt.title("Thresholded RFID Signal (Binary)")
+    plt.xlabel("Sample Index")
+    plt.ylabel("Binary Value")
+    plt.legend()
+    plt.grid()
+
+    plt.tight_layout()
+    plt.show()
+
 # **Main Execution:**
 
 # Step 1: Transmit query command
@@ -374,9 +409,11 @@ transmit_query_pluto(query_command)
 
 # Step 2: Capture RN16 response
 raw_signal = receive_rn16_pluto()
+if debug:
+    plot_received_signal(raw_signal, sample_rate=30e6)
 
 # Step 3: FM0 Decode the received signal
-decoded_bits = fm0_decode(raw_signal, sample_rate=1e6)
+decoded_bits = fm0_decode(raw_signal, sample_rate=30e6)
 
 # Step 4: Extract RN16 and CRC
 rn16, crc = extract_rn16(decoded_bits)
@@ -397,7 +434,7 @@ transmit_ack_pluto(rn16)
 raw_signal = receive_epc_pluto()
 
 # Step 8: FM0 Decode the received signal
-decoded_bits = fm0_decode(raw_signal, sample_rate=1e6)
+decoded_bits = fm0_decode(raw_signal, sample_rate=30e6)
 
 # Step 9: Extract EPC components
 pc, epc, crc = extract_epc(decoded_bits)
