@@ -7,6 +7,75 @@ from scipy.signal import find_peaks
 global debug
 debug = False
 
+
+def crc5(bits):
+    """
+    Computes CRC-5 checksum for the EPC Gen2 Query command.
+    
+    Args:
+        bits (list): The Query command bits before CRC is appended.
+    
+    Returns:
+        list: The 5-bit CRC as a list of integers.
+    """
+    poly = 0b101001  # EPC Gen2 CRC-5 Polynomial (x^5 + x^3 + 1)
+    crc = 0b11111  # Initial CRC value per EPC Gen2 spec
+    
+    for bit in bits:
+        crc_in = (crc >> 4) & 1  # Extract leftmost bit
+        crc = ((crc << 1) & 0b11111) | bit  # Shift and add new bit
+        if crc_in:  
+            crc ^= poly  # XOR with polynomial if MSB was 1
+
+    return [(crc >> i) & 1 for i in reversed(range(5))]  # Return as 5-bit list
+
+def build_query_command(dr=1, M=2, TRext=1, Sel=0, Session=0, Target=0, Q=4):
+    """
+    Constructs a complete EPC Gen2 Query command with CRC-5, allowing Miller encoding.
+
+    Args:
+        dr (int): Divide Ratio (1 bit, 0 = DR=64/3, 1 = DR=8)
+        M (int): **Miller encoding cycles per symbol** (2 bits: 00=1, 01=2, 10=4, 11=8)
+        TRext (int): TRext flag (1 bit, 0 = standard preamble, 1 = extended preamble)
+        Sel (int): Tag selection flag (2 bits)
+        Session (int): Inventory session (2 bits)
+        Target (int): Target flag (1 bit, 0=A, 1=B) - tags will only respond if their A/B state matches the query A/B state
+        Q (int): Slot-count parameter (4 bits, 0-15) - variable to control number of possible tag responses
+
+    Returns:
+        list: EPC Gen2 Query command bit sequence including preamble.
+    """
+    if M not in [1, 2, 4, 8]:
+        raise ValueError("M must be 1 (FM0), 2, 4, or 8 (Miller encoding).")
+
+    # Convert Miller value to correct bit encoding (per EPC Gen2 spec)
+    miller_map = {1: [0, 0], 2: [0, 1], 4: [1, 0], 8: [1, 1]}
+    M_bits = miller_map[M]
+
+    # Step 1: Construct Query command fields (excluding CRC)
+    query_bits = [1, 0, 0, 0]  # Command Code: 4 bits (Fixed as '1000')
+    query_bits.append(dr)  # Divide Ratio (1 bit)
+    query_bits.extend(M_bits)  # **Miller Encoding Field (2 bits)**
+    query_bits.append(TRext)  # TRext (1 bit)
+    query_bits.extend([(Sel >> 1) & 1, Sel & 1])  # Sel (2 bits)
+    query_bits.extend([(Session >> 1) & 1, Session & 1])  # Session (2 bits)
+    query_bits.append(Target)  # Target (1 bit)
+    query_bits.extend([(Q >> 3) & 1, (Q >> 2) & 1, (Q >> 1) & 1, Q & 1])  # Q (4 bits)
+
+    # Step 2: Compute CRC-5 and append
+    crc_bits = crc5(query_bits)
+    query_bits.extend(crc_bits)
+
+    # Step 3: Prepend preamble (depends on TRext)
+    if TRext == 0:
+        preamble = [0] * 12 + [1, 0, 1, 0]  # Standard preamble (12 zeros + violation bit)
+    else:
+        preamble = [1] * 12 + [1, 0, 1, 0]  # Extended preamble with pilot tone
+
+    full_bits = preamble + query_bits  # Full Query command
+
+    return full_bits  # Ready for PIE encoding
+
 def transmit_query_pluto(query_bits, center_freq=915e6, sample_rate=10e6, gain=-10):
     """
     Transmits an EPC Gen2 Query command using PlutoSDR.
@@ -411,8 +480,8 @@ def plot_received_signal(signal, sample_rate, bit_rate=40e3):
 # **Main Execution:**
 
 # Step 1: Transmit query command
-query_command = [1, 0, 1, 1, 0, 0, 1, 0]  # Example Query command TODO check if correct
-# TODO query command needs to indicate FM0 vs Miller encode
+query_command = build_query_command(dr=1, M=4, TRext=0, Sel=0, Session=1, Target=0, Q=4)
+print("Query Command with Miller M=4:", query_command)
 transmit_query_pluto(query_command)
 
 # Step 2: Capture RN16 response
