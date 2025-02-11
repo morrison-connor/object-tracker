@@ -7,7 +7,6 @@ from scipy.signal import find_peaks
 global debug
 debug = False
 
-
 def crc5(bits):
     """
     Computes CRC-5 checksum for the EPC Gen2 Query command.
@@ -76,7 +75,7 @@ def build_query_command(dr=1, M=2, TRext=1, Sel=0, Session=0, Target=0, Q=4):
 
     return full_bits  # Ready for PIE encoding
 
-def transmit_query_pluto(query_bits, center_freq=915e6, sample_rate=10e6, gain=-10):
+def transmit_query_pluto(sdr, query_bits, bit_rate=40e3):
     """
     Transmits an EPC Gen2 Query command using PlutoSDR.
 
@@ -86,39 +85,36 @@ def transmit_query_pluto(query_bits, center_freq=915e6, sample_rate=10e6, gain=-
         sample_rate (float): SDR sample rate in Hz (default 1 MHz).
         gain (int): TX gain in dB (default -10 dB).
     """
-    # Initialize PlutoSDR
-    sdr = adi.ad9361(uri='ip:192.168.2.1')
-
-    # Configure PlutoSDR
-    sdr.sample_rate = int(sample_rate)  # Set sample rate
-    sdr.tx_lo = int(center_freq)  # Set transmission frequency (915 MHz for UHF RFID)
-    sdr.tx_hardwaregain_chan0 = gain  # Adjust TX gain
-    sdr.tx_cyclic_buffer = True  # Enable cyclic transmission
-    # TODO potentially remove cyclic buffer - Chat says this may stretch signal
-
     # Generate the PIE waveform for the Query command
-    waveform = encode_pie(query_bits, sample_rate)
-    t = np.arange(len(waveform)) / sample_rate
+    waveform = encode_pie(query_bits, sdr.sample_rate)
+    t = np.arange(len(waveform)) / sdr.sample_rate
     carrier_frequency = 100e3  # Subcarrier freq, PlutoSDR will upconvert to tx_lo value
-    modulated_waveform = waveform * np.cos(2 * np.pi * carrier_frequency * t)
-
-    if debug:
-        plot_generic_signal("PIE Encoded Query TX", modulated_waveform)
-
-    # TODO test if we need to do modulation?
-
-    # Transmit the waveform
-    sdr.tx([modulated_waveform, modulated_waveform])  # Send waveform (both channels enabled)
+    modulated_waveform = waveform * np.cos(2 * np.pi * carrier_frequency * t)  # TODO test if subcarrier is useful or not
 
     # Allow transmission for a brief period
-    
-    time.sleep(0.1)  # Transmit for 100ms    
-    sdr.tx_destroy_buffer()  # Stop transmission
+    tari = 1 / bit_rate
+    tx_time = 1.5 * tari * len(query_bits) + 0.5 * tari * np.sum(query_bits)
+    # TODO understand logic for selecting a good tari
+    # 6.25 us < tari < 25 us
+    # tari = 1 / bitrate? Seems to work for 40 kbps or 64 kbps
+    # If we set DR = 8, then BLF = 8 / TRCal = 160 kHz, bit_rate = BLF / M = 160 kHz / 4 = 40 kHz
+
+    # if debug:
+    #     plot_generic_signal("PIE Encoded Query TX", modulated_waveform)
+
+    # Transmit the waveform
+    sdr.tx([modulated_waveform, np.zeros_like(modulated_waveform)])  # Send waveform (both channels enabled)
+    #time.sleep(tx_time * 1.1)  # Transmit for transmit time with some extra buffer room
+    #    sdr.tx_destroy_buffer()  # Stop transmission
+
+    #time.sleep(150e-6)  # 200 µs delay for SDR mode switch
+    raw_signal = sdr.rx()  # captures points = to buffer size
+    if debug:
+        plot_generic_signal('raw a (rx)', raw_signal, sdr.sample_rate)
 
     print("Query command transmitted.")
 
-
-def receive_rn16_pluto(center_freq=915e6, sample_rate=10e6, gain=20, capture_time=0.02):
+def receive_rn16_pluto(sdr):
     """
     Receives the RN16 response from an RFID tag using PlutoSDR.
 
@@ -131,22 +127,47 @@ def receive_rn16_pluto(center_freq=915e6, sample_rate=10e6, gain=20, capture_tim
     Returns:
         np.array: Captured raw signal samples.
     """
-    sdr = adi.ad9361(uri='ip:192.168.2.1')
-
-    # Configure SDR settings
-    sdr.rx_lo = int(center_freq)  # Set receive frequency (915 MHz for UHF RFID)
-    sdr.sample_rate = int(sample_rate)  # Set sample rate
-    sdr.rx_hardwaregain_chan0 = gain  # Adjust receive gain
-    sdr.rx_enabled_channels = [0]  # TODO only using one channel for now
-
     # Capture raw signal
-    num_samples = int(sample_rate * capture_time)  # Total samples to capture
-    raw_signal = sdr.rx()[:num_samples]  # Receive data
+    # TODO either the plotting is wrong or we are not collecting the right number of sample to see the signal
+    # sample rate is definitely not correct - if we set capture time > 100 it still captures data instantly
+    # Also the plot looks the same every time in terms of shape and the time scale - very suspicious
+    # Maybe the issue is that we aren't waiting long enough or collecting data properly to see the modulated signal
+    # Good goal would be to look at several ms of data and see if you can pick out where the tag signal is (should be on order of 100us)
+
+    # TODO - testing to see if we can see the TX andd RX signals separately
+    raw_signal = sdr.rx()  # captures points = to buffer size
+    sdr.tx_destroy_buffer()  # Stop transmission
+    if debug:
+        plot_generic_signal('raw b (rx)', raw_signal, sdr.sample_rate)
 
     print("RN16 Response Captured!")
     return raw_signal
 
-def detect_preamble(decoded_bits):
+def preprocess_signal(raw_signal, threshold=None):
+    """
+    Preprocesses the raw SDR signal by extracting the envelope and converting it to binary.
+
+    Args:
+        raw_signal (np.array): Complex-valued received samples from the SDR.
+        sample_rate (float): SDR sample rate in Hz.
+        threshold (float, optional): Manual threshold for binarization.
+
+    Returns:
+        list: Binary sequence representing the RFID tag's response.
+    """
+    # Extract envelope (magnitude of the complex signal)
+    envelope = np.abs(raw_signal)
+
+    # Automatically determine threshold if not provided
+    if threshold is None:
+        threshold = (np.max(envelope) + np.min(envelope)) / 2
+
+    # Convert to binary based on threshold
+    binary_signal = (envelope > threshold).astype(int)
+
+    return binary_signal
+
+def detect_preamble_fm0(decoded_bits):
     """
     Detects the FM0 preamble in the decoded binary sequence.
 
@@ -163,6 +184,46 @@ def detect_preamble(decoded_bits):
         if decoded_bits[i:i+4] == preamble:
             return i + 4  # Return start of RN16 (after preamble)
     return -1  # Preamble not found
+
+def detect_preamble_miller(decoded_bits):
+    """
+    Detects the Miller M=4 preamble (111000) and returns the index.
+
+    Args:
+        decoded_bits (list): The binary sequence after thresholding.
+
+    Returns:
+        int: Index of the first bit after the preamble, or -1 if not found.
+    """
+    preamble = [1, 1, 1, 0, 0, 0]  # Miller M=4 preamble
+    for i in range(len(decoded_bits) - len(preamble) + 1):
+        if decoded_bits[i:i+6] == preamble:
+            return i + 6  # Return the index after the preamble
+    return -1  # Preamble not found
+
+def miller_m4_decode(binary_signal, sample_rate, blf=160e3):
+    """
+    Decodes a Miller M=4 encoded binary signal.
+
+    Args:
+        binary_signal (list): Binarized received signal.
+        sample_rate (float): Sample rate in Hz.
+        blf (float): Backscatter Link Frequency (BLF) in Hz.
+
+    Returns:
+        list: Decoded binary sequence.
+    """
+    bit_period = int(sample_rate / (blf /  4))  # BLF determines bit timing
+    decoded_bits = []
+    
+    i = 0
+    while i < len(binary_signal) - bit_period:
+        window = binary_signal[i:i + bit_period]
+        majority_value = 1 if np.sum(window) > (bit_period // 2) else 0
+        decoded_bits.append(majority_value)
+        i += bit_period  # Move forward by bit period
+
+    return decoded_bits
 
 def fm0_decode(signal, sample_rate, bit_rate=40e3, threshold=None):
     """
@@ -214,10 +275,12 @@ def extract_rn16(decoded_bits):
     Returns:
         tuple: (RN16, CRC-16)
     """
-    preamble_start = detect_preamble(decoded_bits)
-    if preamble_start == -1:
-        print("Error: Preamble not found!")
-        return None, None
+    preamble_start = detect_preamble_miller(decoded_bits)
+    # if preamble_start == -1:
+    #     print("Error: Preamble not found!")
+    #     return None, None
+    #if debug:
+    preamble_start = 0
 
     rn16 = decoded_bits[preamble_start:preamble_start + 16]
     crc16 = decoded_bits[preamble_start + 16:preamble_start + 32]
@@ -276,9 +339,7 @@ def generate_ack_command(rn16):
     ack_prefix = [0, 1]  # 2-bit ACK command header
     return ack_prefix + rn16  # Concatenate header with RN16
 
-import numpy as np
-
-def encode_pie(command_bits, sample_rate=10e6, bitrate=40e3, high=2**14, low=0):
+def encode_pie(command_bits, sample_rate, bitrate=40e3, high=2**14, low=0):
     """
     Encodes an EPC Gen2 command using Pulse Interval Encoding (PIE).
 
@@ -293,8 +354,8 @@ def encode_pie(command_bits, sample_rate=10e6, bitrate=40e3, high=2**14, low=0):
         np.array: Encoded PIE waveform (ASK-modulated).
     """
     tari = 1 / bitrate  # Base unit time (Tari) based on tag bitrate
-    short_pulse = int(sample_rate * tari)  # Short high time
-    long_pulse = int(1.5 * sample_rate * tari)  # Long low time
+    short_pulse = int(sdr.sample_rate * tari)  # Short high time
+    long_pulse = int(1.5 * sdr.sample_rate * tari)  # Long low time
 
     waveform = []
     for bit in command_bits:
@@ -307,106 +368,7 @@ def encode_pie(command_bits, sample_rate=10e6, bitrate=40e3, high=2**14, low=0):
 
     return np.array(waveform, dtype=np.float32)  # Ensure real output for ASK
 
-
-def transmit_ack_pluto(rn16, center_freq=915e6, sample_rate=10e6, gain=-10):
-    """
-    Transmits an EPC Gen2 ACK command using PlutoSDR.
-
-    Args:
-        rn16 (list): The validated 16-bit RN16.
-        center_freq (float): Transmission frequency in Hz (default 915 MHz).
-        sample_rate (float): SDR sample rate in Hz (default 1 MHz).
-        gain (int): TX gain in dB (default -10 dB).
-    """
-    # Initialize PlutoSDR
-    sdr = adi.ad9361(uri='ip:192.168.2.1')
-
-    # Configure PlutoSDR
-    sdr.tx_lo = int(center_freq)  # Set center frequency (915 MHz)
-    sdr.tx_hardwaregain_chan0 = gain  # Adjust TX gain
-    sdr.sample_rate = int(sample_rate)  # Set sample rate
-
-    # Generate ACK command
-    ack_command = generate_ack_command(rn16)
-
-    # Encode ACK command using PIE
-    waveform = encode_pie(ack_command, sample_rate)
-
-    # Transmit the waveform
-    sdr.tx_cyclic_buffer = True  # Enable cyclic transmission
-    sdr.tx([waveform, waveform])  # Send waveform
-
-    # Allow transmission for a brief period
-    time.sleep(0.1)  # Transmit for 100ms
-    sdr.tx_destroy_buffer()  # Stop transmission
-
-    print("ACK command transmitted.")
-
-def receive_epc_pluto(center_freq=915e6, sample_rate=10e6, gain=20, capture_time=0.02):
-    """
-    Receives the EPC response from an RFID tag using PlutoSDR.
-
-    Args:
-        center_freq (float): Frequency in Hz (default 915 MHz).
-        sample_rate (float): SDR sample rate (default 1 MHz).
-        gain (int): RX gain in dB (default 40).
-        capture_time (float): Duration to capture signal in seconds (default 20 ms).
-
-    Returns:
-        np.array: Captured raw signal samples.
-    """
-    # Initialize PlutoSDR
-    sdr = adi.ad9361(uri='ip:192.168.2.1')
-
-    # Configure SDR settings
-    sdr.rx_lo = int(center_freq)  # Set receive frequency (915 MHz)
-    sdr.sample_rate = int(sample_rate)  # Set sample rate
-    sdr.rx_hardwaregain_chan0 = gain  # Adjust receive gain
-    sdr.rx_enabled_channels = [0]  # TODO only using one channel for now
-
-    # Capture raw signal
-    num_samples = int(sample_rate * capture_time)  # Total samples to capture
-    raw_signal = sdr.rx()[:num_samples]  # Receive data
-
-    print("EPC Response Captured!")
-    return raw_signal
-
-def extract_epc(decoded_bits):
-    """
-    Extracts the EPC from the FM0-decoded bits.
-
-    Args:
-        decoded_bits (list): Binary sequence from FM0 decoding.
-
-    Returns:
-        tuple: (PC, EPC, CRC)
-    """
-    if len(decoded_bits) < 128:  # Ensure we have enough bits
-        print("Error: Incomplete EPC response!")
-        return None, None, None
-
-    # EPC Gen2 Format: PC (16 bits) + EPC (96 bits) + CRC (16 bits)
-    pc = decoded_bits[:16]  # Protocol Control (PC)
-    epc = decoded_bits[16:112]  # EPC (typically 96 bits)
-    crc = decoded_bits[112:128]  # CRC-16
-
-    return pc, epc, crc
-
-def validate_epc(epc_bits, received_crc):
-    """
-    Validates EPC by checking CRC-16.
-
-    Args:
-        epc_bits (list): Extracted EPC bits.
-        received_crc (list): Received CRC bits.
-
-    Returns:
-        bool: True if CRC matches, False otherwise.
-    """
-    computed_crc = compute_crc16(epc_bits)
-    return computed_crc == received_crc
-
-def plot_generic_signal(title, signal, sample_rate=10e6):
+def plot_generic_signal(title, signal, sample_rate):
     t = np.linspace(0, (len(signal) - 1) / sample_rate, len(signal))
 
     plt.figure(figsize=(12, 8))
@@ -479,48 +441,55 @@ def plot_received_signal(signal, sample_rate, bit_rate=40e3):
 
 # **Main Execution:**
 
+# Step 0: Free parameters and SDR setup
+sample_rate = 10e6
+center_freq = 915e6
+tx_gain = -10
+rx_gain = 30
+capture_time = 2e-3
+
+sdr = adi.ad9361(uri='ip:192.168.2.1')
+sdr.sample_rate = int(sample_rate + 1)  # Set sample rate to nearest hardware supported rate
+
+sdr.tx_lo = int(center_freq)  # Set transmission frequency (915 MHz for UHF RFID)
+sdr.tx_hardwaregain_chan0 = tx_gain  # Adjust TX gain
+sdr.tx_cyclic_buffer = True  # Enable / disable cyclic transmission
+
+sdr.rx_lo = int(center_freq)  # Set receive frequency (915 MHz for UHF RFID)
+sdr.rx_hardwaregain_chan0 = rx_gain  # Adjust RX gain
+sdr.rx_enabled_channels = [0]  # TODO only using one channel for now
+sdr.rx_buffer_size = int(sample_rate * capture_time)
+
 # Step 1: Transmit query command
 query_command = build_query_command(dr=1, M=4, TRext=0, Sel=0, Session=1, Target=0, Q=4)
 print("Query Command with Miller M=4:", query_command)
-transmit_query_pluto(query_command)
+transmit_query_pluto(sdr, query_command)
 
 # Step 2: Capture RN16 response
-raw_signal = receive_rn16_pluto()
+time.sleep(150e-6)  # 200 µs delay for SDR mode switch
+raw_signal = receive_rn16_pluto(sdr)
+
+# Step 3: Decode the received signal
+binary_signal = preprocess_signal(raw_signal)
+
 if debug:
-    plot_received_signal(raw_signal, sample_rate=10e6)
+   plot_generic_signal('binary_RX', binary_signal, sdr.sample_rate)
 
-# Step 3: FM0 Decode the received signal
-decoded_bits = fm0_decode(raw_signal, sample_rate=10e6)
+decoded_bits = miller_m4_decode(binary_signal, sdr.sample_rate)
+# TODO fix miller m4 decode function
+#decoded_bits = fm0_decode(raw_signal, sample_rate=10e6)
 
-# Step 4: Extract RN16 and CRC
 rn16, crc = extract_rn16(decoded_bits)
 
-if rn16:
+if not(rn16):
+    print('No RN16 found.')
+    quit()
+
+else:
     print("Extracted RN16:", ''.join(map(str, rn16)))
 
     # Step 5: Validate RN16 using CRC
     if validate_rn16(rn16, crc):
         print("✅ RN16 is valid!")
-    else:
-        print("❌ CRC check failed. Data may be corrupted.")
-
-# Step 6: Transmit ACK command
-transmit_ack_pluto(rn16)
-
-# Step 7: Capture EPC response
-raw_signal = receive_epc_pluto()
-
-# Step 8: FM0 Decode the received signal
-decoded_bits = fm0_decode(raw_signal, sample_rate=10e6)
-
-# Step 9: Extract EPC components
-pc, epc, crc = extract_epc(decoded_bits)
-
-if epc:
-    print("Extracted EPC:", ''.join(map(str, epc)))
-
-    # Step 10: Validate EPC using CRC
-    if validate_epc(pc + epc, crc):
-        print("✅ EPC is valid!")
     else:
         print("❌ CRC check failed. Data may be corrupted.")
