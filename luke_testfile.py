@@ -45,32 +45,15 @@ def encode_pie(command_bits, sample_rate=10e6, bitrate=40e3, high=2**14, low=0):
     tari = 1 / bitrate  # Base unit time (Tari)
     short_pulse = int(sample_rate * tari)
     long_pulse = int(1.5 * sample_rate * tari)
-
     waveform = []
     for bit in command_bits:
         if bit == 0:
-            waveform.extend([high] * short_pulse)  # Short high (Tari)
-            waveform.extend([low] * long_pulse)      # Long low (1.5*Tari)
+            waveform.extend([high] * short_pulse)
+            waveform.extend([low] * long_pulse)
         else:
-            waveform.extend([high] * (2 * short_pulse))  # Long high (2*Tari)
-            waveform.extend([low] * short_pulse)         # Short low (Tari)
+            waveform.extend([high] * (2 * short_pulse))
+            waveform.extend([low] * short_pulse)
     return np.array(waveform, dtype=np.float32)
-
-# PlutoSDR Configuration
-CENTER_FREQ = int(915e6)
-SAMPLE_RATE = 10e6
-TX_GAIN = -10     # Adjust as needed
-RX_GAIN = 0     # Adjust as needed
-CAPTURE_TIME = 0.0025  # seconds
-
-# Build the Query Command and encode it using PIE
-dr, m, trext, sel, session, target, q = 1, 2, 0, 0, 0, 0, 4
-QUERY_COMMAND = build_query_command(dr, m, trext, sel, session, target, q)
-waveform = encode_pie(QUERY_COMMAND, sample_rate=SAMPLE_RATE)
-
-print("Constructed Query Command (bits):", QUERY_COMMAND)
-print("Waveform Length (samples):", len(waveform))
-print("Waveform Duration (seconds):", len(waveform) / SAMPLE_RATE)
 
 def plot_transmitted_waveform(waveform, sample_rate):
     t = np.arange(len(waveform)) / sample_rate
@@ -81,32 +64,6 @@ def plot_transmitted_waveform(waveform, sample_rate):
     plt.ylabel("Amplitude")
     plt.grid()
     plt.show()
-
-plot_transmitted_waveform(waveform, SAMPLE_RATE)
-
-# Initialize PlutoSDR
-sdr = adi.ad9361(uri='ip:192.168.2.1')
-sdr.sample_rate = int(SAMPLE_RATE)
-sdr.tx_lo = int(CENTER_FREQ)
-sdr.tx_hardwaregain_chan0 = TX_GAIN
-sdr.rx_lo = int(CENTER_FREQ)
-sdr.rx_hardwaregain_chan0 = RX_GAIN
-sdr.rx_buffer_size = len(waveform)
-sdr.rx_enabled_channels = [0]
-
-# Start full-duplex transmission using a zero array for the inactive TX channel
-sdr.tx_cyclic_buffer = True
-sdr.tx([waveform, np.zeros_like(waveform)])  # TX channel 0 transmits the waveform; channel 1 is silent
-
-# Allow a brief delay (50 ms) for TX to stabilize
-time.sleep(0.05)
-
-# Capture RX data while TX is still active (full duplex)
-num_samples = int(SAMPLE_RATE * CAPTURE_TIME)
-raw_signal = sdr.rx()[:num_samples]
-
-# Stop the TX cyclic buffer after RX capture
-sdr.tx_destroy_buffer()
 
 def plot_signal(title, signal, sample_rate):
     t = np.arange(len(signal)) / sample_rate
@@ -120,8 +77,6 @@ def plot_signal(title, signal, sample_rate):
     plt.grid()
     plt.show()
 
-plot_signal("Received Query Signal", raw_signal, SAMPLE_RATE)
-
 def plot_frequency_domain(signal, sample_rate):
     freq = np.fft.fftfreq(len(signal), 1 / sample_rate)
     fft_signal = np.fft.fft(signal)
@@ -133,4 +88,58 @@ def plot_frequency_domain(signal, sample_rate):
     plt.grid()
     plt.show()
 
-plot_frequency_domain(raw_signal, SAMPLE_RATE)
+# --- Main Code Execution ---
+
+# PlutoSDR and System Configuration
+CENTER_FREQ = int(915e6)
+SAMPLE_RATE = 10e6
+TX_GAIN = -20       # TX gain (adjust as needed)
+RX_GAIN = 30         # RX gain increased to boost weak tag response
+
+# Build the Query Command and encode it using PIE
+dr, m, trext, sel, session, target, q = 1, 2, 0, 0, 0, 0, 4
+QUERY_COMMAND = build_query_command(dr, m, trext, sel, session, target, q)
+waveform = encode_pie(QUERY_COMMAND, sample_rate=SAMPLE_RATE)
+
+print("Constructed Query Command (bits):", QUERY_COMMAND)
+print("Waveform Length (samples):", len(waveform))
+print("Waveform Duration (seconds):", len(waveform) / SAMPLE_RATE)
+#plot_transmitted_waveform(waveform, SAMPLE_RATE)
+
+# Initialize PlutoSDR and configure TX/RX
+sdr = adi.ad9361(uri='ip:192.168.2.1')
+sdr.sample_rate = int(SAMPLE_RATE)
+sdr.tx_lo = int(CENTER_FREQ)
+sdr.tx_hardwaregain_chan0 = TX_GAIN
+sdr.rx_lo = int(CENTER_FREQ)
+sdr.rx_hardwaregain_chan0 = RX_GAIN
+sdr.rx_buffer_size = len(waveform)
+sdr.rx_enabled_channels = [0]  # Use only one RX channel
+
+# --- Transmit the Query Command ---
+
+# Start TX in full-duplex mode: TX channel 0 transmits the query waveform and channel 1 is silent.
+sdr.tx_cyclic_buffer = False
+sdr.tx([waveform, np.zeros_like(waveform)])
+
+# Calculate the duration of the query command.
+query_duration = len(waveform) / SAMPLE_RATE
+
+# Wait for the entire query command to be transmitted.
+#time.sleep(query_duration)
+
+# Wait an additional 500 microseconds for the tag to begin responding.
+time.sleep(0.0005)
+
+# Now capture the maximum allowed window (32768 samples ≈ 3.3 ms at 10 MSPS) to ensure the backscatter is included.
+max_samples = 32768
+raw_response = sdr.rx()[:max_samples]
+
+# Stop TX transmission.
+sdr.tx_destroy_buffer()
+
+
+# --- Plot the Captured Tag Response ---
+plot_signal("Tag Response Signal (Time Domain)", raw_response, SAMPLE_RATE)
+plot_frequency_domain(raw_response, SAMPLE_RATE)
+print(num_samples)
