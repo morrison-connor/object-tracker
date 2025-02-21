@@ -82,7 +82,7 @@ DEBUG = False
 phase_cal = -172  # change this based on calibration to the phase shift value when AoA = 0
 d_wavelength = 0.50  # distance between elements as a fraction of wavelength.  This is normally 0.5
 phase_delay_range = 180  # set to 180 or 90 depending on 1/2 or 1/4 wavelength respectively
-tracking_window = 100  # how much you want to incorporate a moving average
+tracking_window = 1000  # how much you want to incorporate a moving average
 
 '''Setup'''
 samp_rate = 30e6    # must be <=30.72 MHz if both channels are enabled
@@ -222,6 +222,34 @@ def calibrate_phase_delay():
     delay_phases, peak_dbfs, peak_delay, steer_angle, peak_sum, peak_delta, monopulse_phase = scan_for_DOA()
     return peak_delay
 
+def remove_outliers(arr, threshold=1.5):
+    """
+    Removes outliers from a NumPy array using the IQR method.
+    
+    Parameters:
+        arr (numpy.ndarray): Input array containing only numbers.
+        threshold (float): Multiplier for the IQR to determine outlier boundaries (default is 1.5).
+    
+    Returns:
+        numpy.ndarray: Array with outliers removed.
+    """
+    if not isinstance(arr, np.ndarray):
+        raise ValueError("Input must be a NumPy array")
+    
+    # Compute Q1 (25th percentile) and Q3 (75th percentile)
+    Q1 = np.percentile(arr, 25)
+    Q3 = np.percentile(arr, 75)
+    
+    # Compute IQR
+    IQR = Q3 - Q1
+    
+    # Determine bounds for non-outliers
+    lower_bound = Q1 - threshold * IQR
+    upper_bound = Q3 + threshold * IQR
+    
+    # Filter array to remove outliers
+    return arr[(arr >= lower_bound) & (arr <= upper_bound)]
+
 def plot_generic_signal(title, signal, sample_rate):
     t = np.linspace(0, (len(signal) - 1) / sample_rate, len(signal))
 
@@ -279,14 +307,15 @@ p1.addItem(circle)
 line = pg.PlotDataItem()
 p1.addItem(line)
 
-# Sample function to simulate the tracking angle update
+# Function to simulate the tracking angle update
 def update_compass():
     global tracking_angles, phase_cal
     delay_phases, peak_dbfs, peak_delay, steer_angle, peak_sum, peak_delta, monopulse_phase = scan_for_DOA()
     delay = peak_delay  # this will be the starting point if we are doing monopulse tracking
     delay = Tracking(delay)
     tracking_angles = np.append(tracking_angles, calcTheta(delay))
-    tracking_angles = tracking_angles[1:]
+    tracking_angles = tracking_angles[1:]  # remove oldest measurement
+    tracking_angles_inliers = remove_outliers(tracking_angles)
     print(f"Window averaged tracking angle: {np.mean(tracking_angles[-1])}")  # Print the current tracking angle
     print(f"Phase cal: " + str(phase_cal))  # Print the current tracking angle
 
