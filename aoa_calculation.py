@@ -76,13 +76,13 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import matplotlib.pyplot as plt
 import sys
 
-DEBUG = False
+DEBUG = True
 
 '''User inputs'''
 phase_cal = -172  # change this based on calibration to the phase shift value when AoA = 0
 d_wavelength = 0.50  # distance between elements as a fraction of wavelength.  This is normally 0.5
 phase_delay_range = 180  # set to 180 or 90 depending on 1/2 or 1/4 wavelength respectively
-tracking_window = 1000  # how much you want to incorporate a moving average
+tracking_window = 6  # how much you want to incorporate a moving average
 
 '''Setup'''
 samp_rate = 30e6    # must be <=30.72 MHz if both channels are enabled
@@ -173,8 +173,8 @@ def scan_for_DOA():
     peak_sum = []
     peak_delta = []
     monopulse_phase = []
-    if DEBUG:
-        plot_generic_signal("Rx_0", Rx_0, sdr.sample_rate)
+    # if DEBUG:
+    #     plot_generic_signal("Rx_0", Rx_0, sdr.sample_rate)
     delay_phases = np.arange(-phase_delay_range, phase_delay_range, 2)    # phase delay in degrees
     for phase_delay in delay_phases:   
         delayed_Rx_1 = Rx_1 * np.exp(1j*np.deg2rad(phase_delay+phase_cal))
@@ -193,10 +193,11 @@ def scan_for_DOA():
     peak_delay = delay_phases[peak_delay_index[0][0]]
     steer_angle = int(calcTheta(peak_delay))
 
-    print("Peak at:\t" + str(peak_delay + phase_cal) + " (degree phase shift)")
-    print("Phase cal:\t" + str(phase_cal) + " (degree phase shift)")
-    print("Adjusted peak at:\t" + str(peak_delay) + " (degree phase shift)")
-    print("Steering angle:\t" + str(steer_angle) + " (degree phase shift)")
+    # if DEBUG:
+    #     print("Peak at:\t" + str(peak_delay + phase_cal) + " (degree phase shift)")
+    #     print("Phase cal:\t" + str(phase_cal) + " (degree phase shift)")
+    #     print("Adjusted peak at:\t" + str(peak_delay) + " (degree phase shift)")
+    #     print("Steering angle:\t" + str(steer_angle) + " (degree phase shift)")
     
     return delay_phases, peak_dbfs, peak_delay, steer_angle, peak_sum, peak_delta, monopulse_phase
 
@@ -316,15 +317,25 @@ def update_compass():
     tracking_angles = np.append(tracking_angles, calcTheta(delay))
     tracking_angles = tracking_angles[1:]  # remove oldest measurement
     tracking_angles_inliers = remove_outliers(tracking_angles)
-    print(f"Window averaged tracking angle: {np.mean(tracking_angles[-1])}")  # Print the current tracking angle
-    print(f"Phase cal: " + str(phase_cal))  # Print the current tracking angle
+    aoa = np.mean(tracking_angles_inliers)
 
-    disp_steer_angle = np.mean(tracking_angles[-1]) + 90 # +90 to treat vertical line as 0 degrees
-    disp_steer_angle_rad = np.deg2rad(disp_steer_angle)  # Convert latest angle to radians and shift for viewing purposes
+    if DEBUG:
+        print(f"Tracking angles:\n{tracking_angles}")
+        print(f"Inlier tracking angles:\n{tracking_angles_inliers}")
+        print(f"Window averaged tracking angle:\n{aoa}")
+        #print(f"Window averaged tracking angle: {aoa}")  # Print the current tracking angle
+        #print(f"Phase cal: " + str(phase_cal))  # Print the current tracking angle
 
-    x = [0, np.cos(disp_steer_angle_rad)]
-    y = [0, np.sin(disp_steer_angle_rad)]
+    disp_aoa = aoa + 90 # +90 to treat vertical line as 0 degrees
+    disp_aoa_rad = np.deg2rad(disp_aoa)  # Convert latest angle to radians and shift for viewing purposes
+
+    x = [0, np.cos(disp_aoa_rad)]
+    y = [0, np.sin(disp_aoa_rad)]
     line.setData(x, y)
+
+    phase_cal_label.setText(f"Phase Calibration:\t{phase_cal:.2f}°")
+    phase_delay_label.setText(f"Phase Delay:\t{delay:.2f}°")
+    steer_angle_label.setText(f"Steering Angle:\t{aoa:.2f}°")
 
 # Function to be called by the button
 def on_button_click():
@@ -343,10 +354,18 @@ if __name__ == '__main__':
     # Create a button
     button = QtWidgets.QPushButton('Update Compass')
     button.clicked.connect(on_button_click)
+    
+    phase_cal_label = QtWidgets.QLabel("Phase Calibration: 0.00°")  # Initialize label
+    phase_delay_label = QtWidgets.QLabel("Average Phase Delay: 0.00°")  # Initialize label
+    steer_angle_label = QtWidgets.QLabel("Steering Angle: 0.00°")  # Initialize label
+    
 
-    # Add the button to the window layout
+    # Add the elements to the window layout
     layout = QtWidgets.QVBoxLayout()
     layout.addWidget(button)
+    layout.addWidget(phase_cal_label)
+    layout.addWidget(phase_delay_label)
+    layout.addWidget(steer_angle_label)
     
     # Create a widget to contain the plot and button, and set the layout
     container = QtWidgets.QWidget()
