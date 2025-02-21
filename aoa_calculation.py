@@ -76,14 +76,13 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import matplotlib.pyplot as plt
 import sys
 
-PLOT_COMPASS = True
 DEBUG = False
 
 '''User inputs'''
 phase_cal = -172  # change this based on calibration to the phase shift value when AoA = 0
 d_wavelength = 0.50  # distance between elements as a fraction of wavelength.  This is normally 0.5
 phase_delay_range = 180  # set to 180 or 90 depending on 1/2 or 1/4 wavelength respectively
-tracking_window = 12  # how much you want to incorporate a moving average
+tracking_window = 1  # how much you want to incorporate a moving average
 
 '''Setup'''
 samp_rate = 30e6    # must be <=30.72 MHz if both channels are enabled
@@ -219,6 +218,10 @@ def Tracking(last_delay):
         new_delay = last_delay + phase_step
     return new_delay
 
+def calibrate_phase_delay():
+    delay_phases, peak_dbfs, peak_delay, steer_angle, peak_sum, peak_delta, monopulse_phase = scan_for_DOA()
+    return peak_delay
+
 def plot_generic_signal(title, signal, sample_rate):
     t = np.linspace(0, (len(signal) - 1) / sample_rate, len(signal))
 
@@ -256,88 +259,79 @@ delay = Tracking(delay)
 first_theta = calcTheta(delay)
 tracking_angles = np.ones(tracking_window) * first_theta
 
-if not(PLOT_COMPASS):
-    tracking_angles[:-1] = -180   # make a line across the plot when tracking begins
-    '''Setup Plot Window'''
-    win = pg.GraphicsLayoutWidget(show=True)
-    p1 = win.addPlot()
-    p1.setXRange(-80,80)
-    p1.setYRange(0, tracking_window)
-    p1.setLabel('bottom', 'Steering Angle', 'deg', **{'color': '#FFF', 'size': '14pt'})
-    p1.showAxis('left', show=False)
-    p1.showGrid(x=True, alpha=1)
-    p1.setTitle('Monopulse Tracking:  Angle vs Time', **{'color': '#FFF', 'size': '14pt'})
-    fn = QtGui.QFont()
-    fn.setPointSize(15)
-    p1.getAxis("bottom").setTickFont(fn)
+'''Setup Polar Plot Window'''
+# Setup the plot window
+win = pg.GraphicsLayoutWidget(show=True)
+p1 = win.addPlot()
+p1.setAspectLocked()
+p1.hideAxis('bottom')
+p1.hideAxis('left')
+p1.setXRange(-1, 1)
+p1.setYRange(-1, 1)
+p1.setTitle('Monopulse Tracking: Compass View', **{'color': '#FFF', 'size': '14pt'})
 
-    curve1 = p1.plot(tracking_angles)
-    def update_tracker():
-        global tracking_angles, delay
-        delay = Tracking(delay)
-        tracking_angles = np.append(tracking_angles, calcTheta(delay))
-        tracking_angles = tracking_angles[1:]
-        print(f"Current tracking angle: {tracking_angles[-1]}")  # Print the current tracking angle
-        curve1.setData(tracking_angles, np.arange(tracking_window))
-        
-    timer = pg.QtCore.QTimer()
-    timer.timeout.connect(update_tracker)
-    timer.start(0)
+# Circle for compass boundary
+circle = QtWidgets.QGraphicsEllipseItem(-1, -1, 2, 2)
+circle.setPen(pg.mkPen('w'))
+p1.addItem(circle)
 
-    #Start Qt event loop unless running in interactive mode or using pyside.
-    if __name__ == '__main__':
-        import sys
-        if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
-            #QtGui.QApplication.instance().exec_()
-            app = pg.mkQApp()
-            if app.instance() is not None:
-                app.instance().exec()
+# Line to indicate the steering angle
+line = pg.PlotDataItem()
+p1.addItem(line)
 
-    sdr.tx_destroy_buffer()
+# Sample function to simulate the tracking angle update
+def update_compass():
+    global tracking_angles, delay, phase_cal
+    delay = Tracking(delay)
+    tracking_angles = np.append(tracking_angles, calcTheta(delay))
+    tracking_angles = tracking_angles[1:]
+    print(f"Window averaged tracking angle: {np.mean(tracking_angles[-1])}")  # Print the current tracking angle
+    print(f"Phase cal: " + str(phase_cal))  # Print the current tracking angle
 
+    disp_steer_angle = np.mean(tracking_angles[-1]) + 90 # +90 to treat vertical line as 0 degrees
+    disp_steer_angle_rad = np.deg2rad(disp_steer_angle)  # Convert latest angle to radians and shift for viewing purposes
 
-else:
-    '''Setup Polar Plot Window'''
-    win = pg.GraphicsLayoutWidget(show=True)
-    p1 = win.addPlot()
-    p1.setAspectLocked()
-    p1.hideAxis('bottom')
-    p1.hideAxis('left')
-    p1.setXRange(-1, 1)
-    p1.setYRange(-1, 1)
-    p1.setTitle('Monopulse Tracking: Compass View', **{'color': '#FFF', 'size': '14pt'})
+    x = [0, np.cos(disp_steer_angle_rad)]
+    y = [0, np.sin(disp_steer_angle_rad)]
+    line.setData(x, y)
 
-    # Circle for compass boundary
-    circle = QtWidgets.QGraphicsEllipseItem(-1, -1, 2, 2)
-    circle.setPen(pg.mkPen('w'))
-    p1.addItem(circle)
+# Function to be called by the button
+def on_button_click():
+    global phase_cal
+    phase_cal = phase_cal + calibrate_phase_delay()  # this is a weird way of doing this but it works
+    update_compass()
 
-    # Line to indicate the steering angle
-    line = pg.PlotDataItem()
-    p1.addItem(line)
+# Timer to update the plot
+timer = QtCore.QTimer()
+timer.timeout.connect(update_compass)
+timer.start(100)
 
-    def update_compass():
-        global tracking_angles, delay
-        delay = Tracking(delay)
-        tracking_angles = np.append(tracking_angles, calcTheta(delay))
-        tracking_angles = tracking_angles[1:]
-        print(f"Window averaged tracking angle: {np.mean(tracking_angles[-1])}")  # Print the current tracking angle
+if __name__ == '__main__':
+    app = pg.mkQApp()
 
-        disp_steer_angle = np.mean(tracking_angles[-1]) + 90 # +90 to treat vertical line as 0 degrees
-        disp_steer_angle_rad = np.deg2rad(disp_steer_angle)  # Convert latest angle to radians and shift for viewing purposes
+    # Create a button
+    button = QtWidgets.QPushButton('Update Compass')
+    button.clicked.connect(on_button_click)
 
-        x = [0, np.cos(disp_steer_angle_rad)]
-        y = [0, np.sin(disp_steer_angle_rad)]
-        line.setData(x, y)
+    # Add the button to the window layout
+    layout = QtWidgets.QVBoxLayout()
+    layout.addWidget(button)
+    
+    # Create a widget to contain the plot and button, and set the layout
+    container = QtWidgets.QWidget()
+    container.setLayout(layout)
+    
+    # Create a layout for the main window
+    main_layout = QtWidgets.QHBoxLayout()
+    main_layout.addWidget(win)
+    main_layout.addWidget(container)
+    
+    # Set up the window and show
+    window = QtWidgets.QWidget()
+    window.setLayout(main_layout)
+    window.show()
 
-    # Timer to update the plot
-    timer = QtCore.QTimer()
-    timer.timeout.connect(update_compass)
-    timer.start(100)
+    if app.instance() is not None:
+        app.instance().exec()
 
-    if __name__ == '__main__':
-        app = pg.mkQApp()
-        if app.instance() is not None:
-            app.instance().exec()
-
-    sdr.tx_destroy_buffer()
+sdr.tx_destroy_buffer()
