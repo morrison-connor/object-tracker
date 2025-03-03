@@ -76,7 +76,7 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import matplotlib.pyplot as plt
 import sys
 
-DEBUG = False
+DEBUG = True
 INCREMENTAL_TRACKING = False  # original method by John Kraft to compare phase to last value. Probably faster but less accurate
 
 '''User inputs'''
@@ -185,7 +185,9 @@ def scan_for_DOA(phase_cal_input):
     peak_delta = []
     monopulse_phase = []
     if DEBUG:
-        plot_generic_signal("Rx_0", Rx_0, sdr.sample_rate)
+        #plot_signals("Rx_0", Rx_0, sdr.sample_rate)
+        #plot_signals(sdr.sample_rate, Rx_0=Rx_0, Rx_1=Rx_1)
+        plot_and_estimate_phase(Rx_0, Rx_1, sdr.sample_rate, "Rx_0", "Rx_1")
     delay_phases = np.arange(-phase_delay_range, phase_delay_range, 2)    # phase delay in degrees
     for phase_delay in delay_phases:   
         delayed_Rx_1 = Rx_1 * np.exp(1j*np.deg2rad(phase_delay+phase_cal_input))  # (180 + phase_delay - phase_cal) % 360 + 180
@@ -261,29 +263,67 @@ def remove_outliers(arr, threshold=2):
     # Filter array to remove outliers
     return arr[(arr >= lower_bound) & (arr <= upper_bound)]
 
-def plot_generic_signal(title, signal, sample_rate):
-    t = np.linspace(0, (len(signal) - 1) / sample_rate, len(signal))
+def plot_signals(sample_rate, **signals):
+    num_signals = len(signals)
+    rows = num_signals  # Each signal gets a pair of subplots (time + frequency)
 
-    plt.figure(figsize=(12, 8))
-    plt.subplot(2, 1, 1)
-    plt.plot(t, signal, color="purple")
-    plt.title(title + " - Time Domain")
-    plt.xlabel("Time (s)")
-    plt.ylabel("Amplitude")
-    plt.legend()
-    plt.grid()
+    plt.figure(figsize=(12, 4 * num_signals))
 
-    freq = np.fft.fftfreq(len(signal), d=1/sample_rate)
-    fft_signal = np.fft.fft(signal)
-    plt.subplot(2, 1, 2)
-    plt.plot(freq[:int(sample_rate)//2], np.abs(fft_signal[:int(sample_rate)//2]))
-    plt.title(title + " - Frequency Domain")
-    plt.xlabel("Frequency (Hz)")
-    plt.ylabel("Magnitude")
-    plt.grid()
+    for i, (title, signal) in enumerate(signals.items()):
+        t = np.linspace(0, (len(signal) - 1) / sample_rate, len(signal))
+
+        # Time domain plot
+        plt.subplot(rows, 2, 2 * i + 1)
+        plt.plot(t, signal, label=f"{title} - Time Domain", color=np.random.rand(3,))
+        plt.xlabel("Time (s)")
+        plt.ylabel("Amplitude")
+        plt.title(f"{title} - Time Domain")
+        plt.legend()
+        plt.grid()
+
+        # Frequency domain plot
+        freq = np.fft.fftfreq(len(signal), d=1/sample_rate)
+        fft_signal = np.fft.fft(signal)
+        plt.subplot(rows, 2, 2 * i + 2)
+        plt.plot(freq[:len(freq)//2], np.abs(fft_signal[:len(freq)//2]), label=f"{title} - Frequency Domain", color=np.random.rand(3,))
+        plt.xlabel("Frequency (Hz)")
+        plt.ylabel("Magnitude")
+        plt.title(f"{title} - Frequency Domain")
+        plt.legend()
+        plt.grid()
 
     plt.tight_layout()
     plt.show()
+
+def plot_and_estimate_phase(signal1, signal2, sample_rate, title1="Signal 1", title2="Signal 2"):
+    t = np.linspace(0, (len(signal1) - 1) / sample_rate, len(signal1))
+
+    # Plot the two signals
+    plt.figure(figsize=(10, 5))
+    plt.plot(t, signal1, label=title1, color='b', linestyle='-')
+    plt.plot(t, signal2, label=title2, color='r', linestyle='--', alpha=0.7)
+    plt.xlabel("Time (s)")
+    plt.ylabel("Amplitude")
+    plt.title("Overlapping Signals")
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+    # Compute phase difference using FFT
+    fft1 = np.fft.fft(signal1)
+    fft2 = np.fft.fft(signal2)
+
+    # Find dominant frequency
+    freq = np.fft.fftfreq(len(signal1), d=1/sample_rate)
+    idx = np.argmax(np.abs(fft1))  # Index of dominant frequency
+
+    # Compute phase difference at dominant frequency
+    phase_diff = np.angle(fft2[idx]) - np.angle(fft1[idx])
+    phase_diff_deg = np.degrees(phase_diff)  # Convert to degrees
+
+    print(f"Estimated Phase Difference: {phase_diff_deg:.2f} degrees")
+
+    return phase_diff_deg
 
 
 '''Collect Data'''
@@ -335,6 +375,7 @@ def update_compass():
     tracking_angles = tracking_angles[1:]  # remove oldest measurement
     tracking_angles_inliers = remove_outliers(tracking_angles)
     aoa = np.mean(tracking_angles_inliers)
+    aoa_rounded = round(aoa / 15) * 15
 
     if DEBUG:
         print(f"Tracking angles:\n{tracking_angles}")
@@ -343,7 +384,7 @@ def update_compass():
         #print(f"Window averaged tracking angle: {aoa}")  # Print the current tracking angle
         #print(f"Phase cal: " + str(phase_cal))  # Print the current tracking angle
 
-    disp_aoa = aoa + 90 # +90 to treat vertical line as 0 degrees
+    disp_aoa = aoa_rounded + 90 # +90 to treat vertical line as 0 degrees
     disp_aoa_rad = np.deg2rad(disp_aoa)  # Convert latest angle to radians and shift for viewing purposes
 
     x = [0, np.cos(disp_aoa_rad)]
