@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 
 global debug
-debug = False
+debug = True
 
 def crc5(bits):
     """
@@ -103,14 +103,30 @@ def transmit_query_pluto(sdr, query_bits, bit_rate=40e3):
     #     plot_generic_signal("PIE Encoded Query TX", modulated_waveform)
 
     # Transmit the waveform
-    sdr.tx([modulated_waveform, np.zeros_like(modulated_waveform)])  # Send waveform (both channels enabled)
-    #time.sleep(tx_time * 1.1)  # Transmit for transmit time with some extra buffer room
-    #    sdr.tx_destroy_buffer()  # Stop transmission
+    # raw_signal_a = sdr.rx()
+    # sdr.rx_destroy_buffer()
+    # time.sleep(2)
+    
+    # raw_signal_b = sdr.rx()  # captures points = to buffer size
+    # sdr.rx_destroy_buffer()
 
-    #time.sleep(150e-6)  # 200 µs delay for SDR mode switch
-    raw_signal = sdr.rx()  # captures points = to buffer size
+    sdr.tx([modulated_waveform, np.zeros_like(modulated_waveform)])  # Send waveform (both channels enabled)
+    time.sleep(150e-6)
+
+    for i in range(20):  
+        # let Pluto run for a bit, to do all its calibrations
+        raw_signal_c = sdr.rx()  # captures points = to buffer size
+    sdr.rx_destroy_buffer()
+
+    time.sleep(tx_time * 1.1)  # Transmit for transmit time with some extra buffer room
+    sdr.tx_destroy_buffer()  # Stop transmission
+
+    time.sleep(150e-6)  # 200 µs delay for SDR mode switch
+
     if debug:
-        plot_generic_signal('raw a (rx)', raw_signal, sdr.sample_rate)
+        #plot_generic_signal('raw_signal_a (rx)', raw_signal_a, sdr.sample_rate)
+        #plot_generic_signal('raw_signal_b (rx)', raw_signal_b, sdr.sample_rate)
+        plot_generic_signal('raw_signal_c (rx)', raw_signal_c, sdr.sample_rate)
 
     print("Query command transmitted.")
 
@@ -127,21 +143,15 @@ def receive_rn16_pluto(sdr):
     Returns:
         np.array: Captured raw signal samples.
     """
-    # Capture raw signal
-    # TODO either the plotting is wrong or we are not collecting the right number of sample to see the signal
-    # sample rate is definitely not correct - if we set capture time > 100 it still captures data instantly
-    # Also the plot looks the same every time in terms of shape and the time scale - very suspicious
-    # Maybe the issue is that we aren't waiting long enough or collecting data properly to see the modulated signal
-    # Good goal would be to look at several ms of data and see if you can pick out where the tag signal is (should be on order of 100us)
-
-    # TODO - testing to see if we can see the TX andd RX signals separately
-    raw_signal = sdr.rx()  # captures points = to buffer size
-    sdr.tx_destroy_buffer()  # Stop transmission
+    for i in range(20):  
+        # let Pluto run for a bit, to do all its calibrations
+        raw_signal_d = sdr.rx()  # captures points = to buffer size
+    sdr.rx_destroy_buffer()
     if debug:
-        plot_generic_signal('raw b (rx)', raw_signal, sdr.sample_rate)
+        plot_generic_signal('raw_signal_d (rx)', raw_signal_d, sdr.sample_rate)
 
     print("RN16 Response Captured!")
-    return raw_signal
+    return raw_signal_d
 
 def preprocess_signal(raw_signal, threshold=None):
     """
@@ -325,20 +335,6 @@ def validate_rn16(rn16, received_crc):
     computed_crc = compute_crc16(rn16)
     return computed_crc == received_crc
 
-
-def generate_ack_command(rn16):
-    """
-    Generates the 18-bit ACK command for RFID communication.
-
-    Args:
-        rn16 (list): The validated 16-bit RN16 binary list.
-
-    Returns:
-        list: The 18-bit ACK command binary list.
-    """
-    ack_prefix = [0, 1]  # 2-bit ACK command header
-    return ack_prefix + rn16  # Concatenate header with RN16
-
 def encode_pie(command_bits, sample_rate, bitrate=40e3, high=2**14, low=0):
     """
     Encodes an EPC Gen2 command using Pulse Interval Encoding (PIE).
@@ -445,15 +441,16 @@ def plot_received_signal(signal, sample_rate, bit_rate=40e3):
 sample_rate = 10e6
 center_freq = 915e6
 tx_gain = -10
-rx_gain = 30
-capture_time = 2e-3
+rx_gain = 60
+capture_time = 5e-3
 
 sdr = adi.ad9361(uri='ip:192.168.2.1')
 sdr.sample_rate = int(sample_rate + 1)  # Set sample rate to nearest hardware supported rate
+sdr.gain_control_mode = "manual"
 
 sdr.tx_lo = int(center_freq)  # Set transmission frequency (915 MHz for UHF RFID)
 sdr.tx_hardwaregain_chan0 = tx_gain  # Adjust TX gain
-sdr.tx_cyclic_buffer = True  # Enable / disable cyclic transmission
+sdr.tx_cyclic_buffer = False  # Enable / disable cyclic transmission
 
 sdr.rx_lo = int(center_freq)  # Set receive frequency (915 MHz for UHF RFID)
 sdr.rx_hardwaregain_chan0 = rx_gain  # Adjust RX gain
@@ -461,19 +458,19 @@ sdr.rx_enabled_channels = [0]  # TODO only using one channel for now
 sdr.rx_buffer_size = int(sample_rate * capture_time)
 
 # Step 1: Transmit query command
-query_command = build_query_command(dr=1, M=4, TRext=0, Sel=0, Session=1, Target=0, Q=4)
+query_command = build_query_command(dr=1, M=4, TRext=0, Sel=0, Session=1, Target=1, Q=4)
 print("Query Command with Miller M=4:", query_command)
 transmit_query_pluto(sdr, query_command)
 
 # Step 2: Capture RN16 response
-time.sleep(150e-6)  # 200 µs delay for SDR mode switch
+time.sleep(50e-6)  # 200 µs delay for SDR mode switch
 raw_signal = receive_rn16_pluto(sdr)
 
 # Step 3: Decode the received signal
 binary_signal = preprocess_signal(raw_signal)
 
-if debug:
-   plot_generic_signal('binary_RX', binary_signal, sdr.sample_rate)
+# if debug:
+#    plot_generic_signal('binary_RX', binary_signal, sdr.sample_rate)
 
 decoded_bits = miller_m4_decode(binary_signal, sdr.sample_rate)
 # TODO fix miller m4 decode function

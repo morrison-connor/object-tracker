@@ -72,24 +72,11 @@ video walkthrough of this at:  https://www.youtube.com/@jonkraft
 import adi
 import numpy as np
 import pyqtgraph as pg   # pyqtgraph will plot MUCH faster than matplotlib (https://pyqtgraph.readthedocs.io/en/latest/getting_started/installation.html)
-from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
-import matplotlib.pyplot as plt
-import sys
-
-DEBUG = False
-INCREMENTAL_TRACKING = False  # original method by John Kraft to compare phase to last value. Probably faster but less accurate
-
-'''User inputs'''
-phase_cal = 0  # change this based on calibration to the phase shift value when AoA = 0
-d_wavelength = 0.50  # distance between elements as a fraction of wavelength.  This is normally 0.5
-phase_delay_range = 160  # set to 180 or 90 depending on 1/2 or 1/4 wavelength respectively
-phase_cal_window_size = 10
-phase_window_size = 5
-angle_window_size = 6
+from pyqtgraph.Qt import QtCore, QtGui
 
 '''Setup'''
-samp_rate = 30e6    # must be <=30.72 MHz if both channels are enabled
-NumSamples = 2**10
+samp_rate = 2e6    # must be <=30.72 MHz if both channels are enabled
+NumSamples = 2**12
 rx_lo = 915e6 #2.3e9
 rx_mode = "manual"  # can be "manual" or "slow_attack"
 rx_gain0 = 40
@@ -97,8 +84,11 @@ rx_gain1 = 40
 tx_lo = rx_lo
 tx_gain = -3
 fc0 = int(200e3)
+phase_cal = -110
+tracking_length = 1000
 
 ''' Set distance between Rx antennas '''
+d_wavelength = 0.5                  # distance between elements as a fraction of wavelength.  This is normally 0.5
 wavelength = 3E8/rx_lo              # wavelength of the RF carrier
 d = d_wavelength*wavelength         # distance between elements in meters
 print("Set distance between Rx Antennas to ", int(d*1000), "mm")
@@ -158,7 +148,7 @@ def dbfs(raw_data):
     return s_shift, s_dbfs
 
 def monopulse_angle(array1, array2):
-    ''' Correlate the sum and delta signals'''
+    ''' Correlate the sum and delta signals  '''
     # Since our signals are closely aligned in time, we can just return the 'valid' case where the signals completley overlap
     # We can do correlation in the time domain (probably faster) or the freq domain
     # In the time domain, it would just be this:
@@ -168,15 +158,7 @@ def monopulse_angle(array1, array2):
     angle_diff = np.angle(sum_delta_correlation)
     return angle_diff
 
-def multi_DOA_scan(phase_cal_input, iters):
-    peak_delays = np.zeros(iters)
-    for i in range(iters):
-        delay_phases, peak_dbfs, peak_delay, peak_sum = scan_for_DOA(phase_cal_input=phase_cal_input)
-        peak_delays[i] = peak_delay
-    phase_delay = np.mean(remove_outliers(peak_delays))
-    return phase_delay
-
-def scan_for_DOA(phase_cal_input):
+def scan_for_DOA():
     # go through all the possible phase shifts and find the peak, that will be the DOA (direction of arrival) aka steer_angle
     data = sdr.rx()
     Rx_0=data[0]
@@ -184,39 +166,28 @@ def scan_for_DOA(phase_cal_input):
     peak_sum = []
     peak_delta = []
     monopulse_phase = []
-    if DEBUG:
-        plot_generic_signal("Rx_0", Rx_0, sdr.sample_rate)
-    delay_phases = np.arange(-phase_delay_range, phase_delay_range, 2)    # phase delay in degrees
+    delay_phases = np.arange(-180, 180, 2)    # phase delay in degrees
     for phase_delay in delay_phases:   
-        delayed_Rx_1 = Rx_1 * np.exp(1j*np.deg2rad(phase_delay+phase_cal_input))  # (180 + phase_delay - phase_cal) % 360 + 180
+        delayed_Rx_1 = Rx_1 * np.exp(1j*np.deg2rad(phase_delay+phase_cal))
         delayed_sum = Rx_0 + delayed_Rx_1
         delayed_delta = Rx_0 - delayed_Rx_1
         delayed_sum_fft, delayed_sum_dbfs = dbfs(delayed_sum)
         delayed_delta_fft, delayed_delta_dbfs = dbfs(delayed_delta)
-        #mono_angle = monopulse_angle(delayed_sum_fft, delayed_delta_fft)
+        mono_angle = monopulse_angle(delayed_sum_fft, delayed_delta_fft)
         
         peak_sum.append(np.max(delayed_sum_dbfs))
-        #peak_delta.append(np.max(delayed_delta_dbfs))
-        #monopulse_phase.append(np.sign(mono_angle))
+        peak_delta.append(np.max(delayed_delta_dbfs))
+        monopulse_phase.append(np.sign(mono_angle))
         
     peak_dbfs = np.max(peak_sum)
     peak_delay_index = np.where(peak_sum==peak_dbfs)
     peak_delay = delay_phases[peak_delay_index[0][0]]
-    #steer_angle = int(calcTheta(peak_delay))
-
-    # if DEBUG:
-    #     print("Peak at:\t" + str(peak_delay + phase_cal) + " (degree phase shift)")
-    #     print("Phase cal:\t" + str(phase_cal) + " (degree phase shift)")
-    #     print("Adjusted peak at:\t" + str(peak_delay) + " (degree phase shift)")
-    #     print("Steering angle:\t" + str(steer_angle) + " (degree phase shift)")
+    steer_angle = int(calcTheta(peak_delay))
     
-    return delay_phases, peak_dbfs, peak_delay, peak_sum #, peak_delta, monopulse_phase
+    return delay_phases, peak_dbfs, peak_delay, steer_angle, peak_sum, peak_delta, monopulse_phase
 
 def Tracking(last_delay):
-    # HOW THIS WORKS
-    # Reruns the DoA scan but only for the calibrated delay. Then adjusts the delay by 1 at a time based on how the reference angle changes
     # last delay is the peak_delay (in deg) from the last buffer of data collected
-    # NOT CURRENTLY IN USE
     data = sdr.rx()
     Rx_0=data[0]
     Rx_1=data[1]
@@ -226,182 +197,59 @@ def Tracking(last_delay):
     delayed_sum_fft, delayed_sum_dbfs = dbfs(delayed_sum)
     delayed_delta_fft, delayed_delta_dbfs = dbfs(delayed_delta)
     mono_angle = monopulse_angle(delayed_sum_fft, delayed_delta_fft)
-    phase_step= 5  # TODO experiment with slightly larger value to see if it moves faster
+    phase_step= 1
     if np.sign(mono_angle) > 0:
         new_delay = last_delay - phase_step
     else:
         new_delay = last_delay + phase_step
     return new_delay
 
-def remove_outliers(arr, threshold=2):
-    """
-    Removes outliers from a NumPy array using the IQR method.
+'''Setup Plot Window'''
+win = pg.GraphicsLayoutWidget(show=True)
+p1 = win.addPlot()
+p1.setXRange(-80,80)
+p1.setYRange(0, tracking_length)
+p1.setLabel('bottom', 'Steering Angle', 'deg', **{'color': '#FFF', 'size': '14pt'})
+p1.showAxis('left', show=False)
+p1.showGrid(x=True, alpha=1)
+p1.setTitle('Monopulse Tracking:  Angle vs Time', **{'color': '#FFF', 'size': '14pt'})
+fn = QtGui.QFont()
+fn.setPointSize(15)
+p1.getAxis("bottom").setTickFont(fn)
     
-    Parameters:
-        arr (numpy.ndarray): Input array containing only numbers.
-        threshold (float): Multiplier for the IQR to determine outlier boundaries (default is 1.5).
-    
-    Returns:
-        numpy.ndarray: Array with outliers removed.
-    """
-    if not isinstance(arr, np.ndarray):
-        raise ValueError("Input must be a NumPy array")
-    
-    # Compute Q1 (25th percentile) and Q3 (75th percentile)
-    Q1 = np.percentile(arr, 25)
-    Q3 = np.percentile(arr, 75)
-    
-    # Compute IQR
-    IQR = Q3 - Q1
-    
-    # Determine bounds for non-outliers
-    lower_bound = Q1 - threshold * IQR
-    upper_bound = Q3 + threshold * IQR
-    
-    # Filter array to remove outliers
-    return arr[(arr >= lower_bound) & (arr <= upper_bound)]
-
-def plot_generic_signal(title, signal, sample_rate):
-    t = np.linspace(0, (len(signal) - 1) / sample_rate, len(signal))
-
-    plt.figure(figsize=(12, 8))
-    plt.subplot(2, 1, 1)
-    plt.plot(t, signal, color="purple")
-    plt.title(title + " - Time Domain")
-    plt.xlabel("Time (s)")
-    plt.ylabel("Amplitude")
-    plt.legend()
-    plt.grid()
-
-    freq = np.fft.fftfreq(len(signal), d=1/sample_rate)
-    fft_signal = np.fft.fft(signal)
-    plt.subplot(2, 1, 2)
-    plt.plot(freq[:int(sample_rate)//2], np.abs(fft_signal[:int(sample_rate)//2]))
-    plt.title(title + " - Frequency Domain")
-    plt.xlabel("Frequency (Hz)")
-    plt.ylabel("Magnitude")
-    plt.grid()
-
-    plt.tight_layout()
-    plt.show()
-
-
 '''Collect Data'''
 for i in range(20):  
     # let Pluto run for a bit, to do all its calibrations
     data = sdr.rx()
     
-#scan once to get the direction of arrival (steer_angle) as the initial point for our monopulse tracker
-phase_cal = multi_DOA_scan(0, phase_cal_window_size)
-delay_phases, peak_dbfs, peak_delay, peak_sum = scan_for_DOA(phase_cal)
+#scan once to get the direction of arrival (steer_angle) as the initial point for out monopulse tracker
+delay_phases, peak_dbfs, peak_delay, steer_angle, peak_sum, peak_delta, monopulse_phase = scan_for_DOA()
+delay = peak_delay  # this will be the starting point if we are doing monopulse tracking
+tracking_angles = np.ones(tracking_length)*180
+tracking_angles[:-1] = -180   # make a line across the plot when tracking begins
 
-if INCREMENTAL_TRACKING:
-    delay = peak_delay  # this will be the starting point if we are doing monopulse tracking
+curve1 = p1.plot(tracking_angles)
+def update_tracker():
+    global tracking_angles, delay
     delay = Tracking(delay)
-
-first_theta = calcTheta(peak_delay)
-tracking_angles = np.ones(angle_window_size) * first_theta
-
-'''Setup Polar Plot Window'''
-# Setup the plot window
-win = pg.GraphicsLayoutWidget(show=True)
-p1 = win.addPlot()
-p1.setAspectLocked()
-p1.hideAxis('bottom')
-p1.hideAxis('left')
-p1.setXRange(-1, 1)
-p1.setYRange(-1, 1)
-p1.setTitle('Monopulse Tracking: Compass View', **{'color': '#FFF', 'size': '14pt'})
-
-# Circle for compass boundary
-circle = QtWidgets.QGraphicsEllipseItem(-1, -1, 2, 2)
-circle.setPen(pg.mkPen('w'))
-p1.addItem(circle)
-
-# Line to indicate the steering angle
-line = pg.PlotDataItem()
-p1.addItem(line)
-
-# Function to simulate the tracking angle update
-def update_compass():
-    global tracking_angles, phase_cal, delay
-    if INCREMENTAL_TRACKING:
-        delay = Tracking(delay)  # TODO: test not using this
-    else:
-        peak_delay = multi_DOA_scan(phase_cal, phase_window_size)
-        delay = peak_delay
-
     tracking_angles = np.append(tracking_angles, calcTheta(delay))
-    tracking_angles = tracking_angles[1:]  # remove oldest measurement
-    tracking_angles_inliers = remove_outliers(tracking_angles)
-    aoa = np.mean(tracking_angles_inliers)
+    tracking_angles = tracking_angles[1:]
+    curve1.setData(tracking_angles, np.arange(tracking_length))
+    
+timer = pg.QtCore.QTimer()
+timer.timeout.connect(update_tracker)
+timer.start(0)
 
-    if DEBUG:
-        print(f"Tracking angles:\n{tracking_angles}")
-        print(f"Inlier tracking angles:\n{tracking_angles_inliers}")
-        print(f"Window averaged tracking angle:\n{aoa}")
-        #print(f"Window averaged tracking angle: {aoa}")  # Print the current tracking angle
-        #print(f"Phase cal: " + str(phase_cal))  # Print the current tracking angle
-
-    disp_aoa = aoa + 90 # +90 to treat vertical line as 0 degrees
-    disp_aoa_rad = np.deg2rad(disp_aoa)  # Convert latest angle to radians and shift for viewing purposes
-
-    x = [0, np.cos(disp_aoa_rad)]
-    y = [0, np.sin(disp_aoa_rad)]
-    line.setData(x, y)
-
-    phase_cal_label.setText(f"Phase Calibration:\t{phase_cal:.2f}°")
-    phase_delay_pre_label.setText(f"Phase Delay Before Cal:\t{delay-phase_cal:.2f}°")
-    phase_delay_label.setText(f"Phase Delay After Cal:\t{delay:.2f}°")
-    steer_angle_label.setText(f"Steering Angle:\t{aoa:.2f}°")
-
-# Function to be called by the button
-def phase_cal_button_click():
-    global phase_cal, phase_window_size
-    phase_cal = multi_DOA_scan(0, phase_cal_window_size)
-    update_compass()
-
-# Timer to update the plot
-timer = QtCore.QTimer()
-timer.timeout.connect(update_compass)
-timer.start(100)
-
+## Start Qt event loop unless running in interactive mode or using pyside.
 if __name__ == '__main__':
-    app = pg.mkQApp()
-
-    # Create a button
-    button = QtWidgets.QPushButton('Phase Calibration')
-    button.clicked.connect(phase_cal_button_click)
-    
-    phase_cal_label = QtWidgets.QLabel("Phase Calibration: 0.00°")  # Initialize label
-    phase_delay_pre_label = QtWidgets.QLabel("Average Pre Phase Delay: 0.00°")  # Initialize label
-    phase_delay_label = QtWidgets.QLabel("Average Phase Delay: 0.00°")  # Initialize label
-    steer_angle_label = QtWidgets.QLabel("Steering Angle: 0.00°")  # Initialize label
-    
-
-    # Add the elements to the window layout
-    layout = QtWidgets.QVBoxLayout()
-    layout.addWidget(button)
-    layout.addWidget(phase_cal_label)
-    layout.addWidget(phase_delay_pre_label)
-    layout.addWidget(phase_delay_label)
-    layout.addWidget(steer_angle_label)
-    
-    # Create a widget to contain the plot and button, and set the layout
-    container = QtWidgets.QWidget()
-    container.setLayout(layout)
-    
-    # Create a layout for the main window
-    main_layout = QtWidgets.QHBoxLayout()
-    main_layout.addWidget(win)
-    main_layout.addWidget(container)
-    
-    # Set up the window and show
-    window = QtWidgets.QWidget()
-    window.setLayout(main_layout)
-    window.show()
-
-    if app.instance() is not None:
-        app.instance().exec()
-
+    import sys
+    if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
+        #QtGui.QApplication.instance().exec_()
+        app = pg.mkQApp()
+        if app.instance() is not None:
+            app.instance().exec()
+        
 sdr.tx_destroy_buffer()
+
+
+        
