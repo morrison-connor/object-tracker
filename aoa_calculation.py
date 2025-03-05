@@ -96,7 +96,7 @@ rx_gain0 = 40
 rx_gain1 = 40
 tx_lo = rx_lo
 tx_gain = -3
-fc0 = int(200e3)
+fc0 = int(600e3)
 
 ''' Set distance between Rx antennas '''
 wavelength = 3E8/rx_lo              # wavelength of the RF carrier
@@ -326,6 +326,17 @@ def plot_and_estimate_phase(signal1, signal2, sample_rate, title1="Signal 1", ti
 
     return phase_diff_deg
 
+# Global flag for pause state
+paused = False
+
+def toggle_pause():
+    global paused, pauseButton
+    paused = not paused
+    if paused:
+        pauseButton.setText("Play")
+    else:
+        pauseButton.setText("Pause")
+
 
 '''Collect Data'''
 for i in range(20):  
@@ -367,14 +378,13 @@ p1.addItem(line)
 # Create a new GraphicsLayoutWidget for time-domain plots
 timePlotWidget = pg.GraphicsLayoutWidget()
 # Create three PlotWidgets for Rx0, Rx1, and Rx1 shifted.
-rx0Plot = timePlotWidget.addPlot(title="Rx0 Signal (Real)")
-rx0Plot.showGrid(x=True, y=True)
-timePlotWidget.nextRow()
-rx1Plot = timePlotWidget.addPlot(title="Rx1 Signal (Real)")
-rx1Plot.showGrid(x=True, y=True)
+rx0_rx1_Plot = timePlotWidget.addPlot(title="Rx0 and Rx1 Signals")
+rx0_rx1_Plot.showGrid(x=True, y=True)
+rx0_rx1_Plot.addLegend()
 timePlotWidget.nextRow()
 rx1ShiftPlot = timePlotWidget.addPlot(title="Rx1 Shifted Signal (Real)")
 rx1ShiftPlot.showGrid(x=True, y=True)
+rx1ShiftPlot.addLegend()
 
 # We keep the existing compass widget "win" (which contains p1)
 # and add the timePlotWidget as a second widget in the main layout.
@@ -385,6 +395,11 @@ main_layout.addWidget(timePlotWidget) # time-domain plots
 # Function to simulate the tracking angle update
 def update_compass():
     global tracking_angles, phase_cal, delay
+
+    # Check if paused; if yes, skip updating.
+    if paused:
+        return
+    
     if INCREMENTAL_TRACKING:
         delay = Tracking(delay)  # TODO: test not using this
     else:
@@ -422,12 +437,14 @@ def update_compass():
     Rx1 = data[1]
     # Apply the current phase shift (use peak_delay as phase shift value, for example)
     Rx1_shifted = Rx1 * np.exp(1j * np.deg2rad(delay+phase_cal)) ##delay - phase cal gives  inverted signal, delay + phase cal seems to work
+    RX1_calibrated = Rx1 * np.exp(1j * np.deg2rad(phase_cal))
     t = np.arange(len(Rx0)) / samp_rate
 
     # Update plots: setData expects x and y arrays.
-    rx0Plot.plot(t, np.real(Rx0), clear=True, pen='cyan')
-    rx1Plot.plot(t, np.real(Rx1), clear=True, pen='orange')
-    rx1ShiftPlot.plot(t, np.real(Rx1_shifted), clear=True, pen='g')
+    rx0_rx1_Plot.plot(t, np.real(Rx0), clear=True, pen='cyan', name="Rx0")
+    rx0_rx1_Plot.plot(t, np.real(RX1_calibrated), clear=False, pen='orange', name="Rx1")
+    rx1ShiftPlot.plot(t, np.real(Rx0), clear=True, pen='cyan', name="Rx0")
+    rx1ShiftPlot.plot(t, np.real(Rx1_shifted), clear=False, pen='g', name="Rx1 Shifted")
 
 # Function to be called by the button
 def phase_cal_button_click():
@@ -446,6 +463,10 @@ if __name__ == '__main__':
     # Create a button
     button = QtWidgets.QPushButton('Phase Calibration')
     button.clicked.connect(phase_cal_button_click)
+
+    # Create the pause/play button
+    pauseButton = QtWidgets.QPushButton("Pause")
+    pauseButton.clicked.connect(toggle_pause)
     
     phase_cal_label = QtWidgets.QLabel("Phase Calibration: 0.00°")  # Initialize label
     phase_delay_pre_label = QtWidgets.QLabel("Average Pre Phase Delay: 0.00°")  # Initialize label
@@ -456,6 +477,7 @@ if __name__ == '__main__':
     # Add the elements to the window layout
     layout = QtWidgets.QVBoxLayout()
     layout.addWidget(button)
+    layout.addWidget(pauseButton)      # add the pause/play button
     layout.addWidget(phase_cal_label)
     layout.addWidget(phase_delay_pre_label)
     layout.addWidget(phase_delay_label)
