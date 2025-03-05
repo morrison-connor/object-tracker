@@ -363,6 +363,25 @@ p1.addItem(circle)
 line = pg.PlotDataItem()
 p1.addItem(line)
 
+'''Time domain plots'''
+# Create a new GraphicsLayoutWidget for time-domain plots
+timePlotWidget = pg.GraphicsLayoutWidget()
+# Create three PlotWidgets for Rx0, Rx1, and Rx1 shifted.
+rx0Plot = timePlotWidget.addPlot(title="Rx0 Signal (Real)")
+rx0Plot.showGrid(x=True, y=True)
+timePlotWidget.nextRow()
+rx1Plot = timePlotWidget.addPlot(title="Rx1 Signal (Real)")
+rx1Plot.showGrid(x=True, y=True)
+timePlotWidget.nextRow()
+rx1ShiftPlot = timePlotWidget.addPlot(title="Rx1 Shifted Signal (Real)")
+rx1ShiftPlot.showGrid(x=True, y=True)
+
+# We keep the existing compass widget "win" (which contains p1)
+# and add the timePlotWidget as a second widget in the main layout.
+main_layout = QtWidgets.QHBoxLayout()
+main_layout.addWidget(win)          # compass view
+main_layout.addWidget(timePlotWidget) # time-domain plots
+
 # Function to simulate the tracking angle update
 def update_compass():
     global tracking_angles, phase_cal, delay
@@ -395,6 +414,20 @@ def update_compass():
     phase_delay_pre_label.setText(f"Phase Delay Before Cal:\t{delay-phase_cal:.2f}°")
     phase_delay_label.setText(f"Phase Delay After Cal:\t{delay:.2f}°")
     steer_angle_label.setText(f"Steering Angle:\t{aoa:.2f}°")
+
+    # --- Update the time-domain plots using pyqtgraph ---
+    # Acquire new block of Rx data
+    data = sdr.rx()
+    Rx0 = data[0]
+    Rx1 = data[1]
+    # Apply the current phase shift (use peak_delay as phase shift value, for example)
+    Rx1_shifted = Rx1 * np.exp(1j * np.deg2rad(delay+phase_cal)) ##delay - phase cal gives  inverted signal, delay + phase cal seems to work
+    t = np.arange(len(Rx0)) / samp_rate
+
+    # Update plots: setData expects x and y arrays.
+    rx0Plot.plot(t, np.real(Rx0), clear=True, pen='cyan')
+    rx1Plot.plot(t, np.real(Rx1), clear=True, pen='orange')
+    rx1ShiftPlot.plot(t, np.real(Rx1_shifted), clear=True, pen='g')
 
 # Function to be called by the button
 def phase_cal_button_click():
@@ -432,17 +465,21 @@ if __name__ == '__main__':
     container = QtWidgets.QWidget()
     container.setLayout(layout)
     
-    # Create a layout for the main window
-    main_layout = QtWidgets.QHBoxLayout()
-    main_layout.addWidget(win)
-    main_layout.addWidget(container)
-    
-    # Set up the window and show
-    window = QtWidgets.QWidget()
-    window.setLayout(main_layout)
-    window.show()
+    # Create a layout for the main window that includes:
+# 1. The compass widget ("win")
+# 2. The time-domain plot widget ("timePlotWidget")
+# 3. The container with your buttons/labels ("container")
+main_layout = QtWidgets.QHBoxLayout()
+main_layout.addWidget(win)           # Compass view
+main_layout.addWidget(timePlotWidget)  # Time-domain plots
+main_layout.addWidget(container)       # Control panel
 
-    if app.instance() is not None:
-        app.instance().exec()
+# Create the main window, set the layout, and show it.
+window = QtWidgets.QWidget()
+window.setLayout(main_layout)
+window.show()
+
+if app.instance() is not None:
+    app.instance().exec()
 
 sdr.tx_destroy_buffer()
