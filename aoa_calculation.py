@@ -76,13 +76,13 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import matplotlib.pyplot as plt
 import sys
 
-DEBUG = True
+DEBUG = False
 INCREMENTAL_TRACKING = False  # original method by John Kraft to compare phase to last value. Probably faster but less accurate
 
 '''User inputs'''
 phase_cal = 0  # change this based on calibration to the phase shift value when AoA = 0
 d_wavelength = 0.50  # distance between elements as a fraction of wavelength.  This is normally 0.5
-phase_delay_range = 160  # set to 180 or 90 depending on 1/2 or 1/4 wavelength respectively
+phase_delay_range = 180  # set to 180 or 90 depending on 1/2 or 1/4 wavelength respectively
 phase_cal_window_size = 10
 phase_window_size = 5
 angle_window_size = 6
@@ -145,6 +145,7 @@ def calcTheta(phase):
     arcsin_arg = np.deg2rad(phase)*3E8/(2*np.pi*rx_lo*d)
     arcsin_arg = max(min(1, arcsin_arg), -1)     # arcsin argument must be between 1 and -1, or numpy will throw a warning
     calc_theta = np.rad2deg(np.arcsin(arcsin_arg))
+    calc_theta = -1 * calc_theta
     return calc_theta
 
 def dbfs(raw_data):
@@ -375,7 +376,6 @@ def update_compass():
     tracking_angles = tracking_angles[1:]  # remove oldest measurement
     tracking_angles_inliers = remove_outliers(tracking_angles)
     aoa = np.mean(tracking_angles_inliers)
-    aoa_rounded = round(aoa / 15) * 15
 
     if DEBUG:
         print(f"Tracking angles:\n{tracking_angles}")
@@ -384,7 +384,7 @@ def update_compass():
         #print(f"Window averaged tracking angle: {aoa}")  # Print the current tracking angle
         #print(f"Phase cal: " + str(phase_cal))  # Print the current tracking angle
 
-    disp_aoa = aoa_rounded + 90 # +90 to treat vertical line as 0 degrees
+    disp_aoa = aoa + 90 # +90 to treat vertical line as 0 degrees
     disp_aoa_rad = np.deg2rad(disp_aoa)  # Convert latest angle to radians and shift for viewing purposes
 
     x = [0, np.cos(disp_aoa_rad)]
