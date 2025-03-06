@@ -28,7 +28,44 @@ def crc5(bits):
 
     return [(crc >> i) & 1 for i in reversed(range(5))]  # Return as 5-bit list
 
-def build_query_command(dr=1, M=2, TRext=1, Sel=0, Session=0, Target=0, Q=4):
+def build_complete_query_command(dr=0, M=4, TRext=0, Sel=0, Session=0, Target=0, Q=4):
+    """
+    Constructs a complete EPC Gen2 Query command with a more compliant preamble.
+    
+    This includes:
+      - Pilot tone: 12 bits (all ones for extended, all zeros for standard)
+      - RTcal field: a placeholder field (e.g. 2 bits) whose duration (when encoded) should equal the sum of data-0 and data-1 durations.
+      - TRcal field: a placeholder field (e.g. 4 bits) to set the backscatter link frequency.
+      - Query command: the standard query fields with CRC-5.
+    
+    Adjust the lengths and bit patterns of the RTcal and TRcal fields as needed to meet your desired timing.
+    """
+    # Pilot tone: 12 bits.
+    if TRext == 0:
+        pilot = [0] * 12
+    else:
+        pilot = [1] * 12
+        
+    # RTcal field (placeholder): For example, use 2 bits.
+    # In practice, choose the number of bits so that when encoded they yield a time duration equal to
+    # (data0_duration + data1_duration). Adjust this pattern based on your chosen Tari.
+    rtcal_field = [0, 1]  # verified by chat to be consistent with short=1t and long=1.5t
+    
+    # TRcal field (placeholder): For example, use 4 bits.
+    # This should be chosen to yield a TRcal duration that, combined with DR, gives the proper BLF.
+    trcal_field = [0]  # verified by chat assuing dr=0 (64/3) parameter, resulting in BLF = 341 kHz
+    
+    # Build the Query command bits (excluding any preamble). 
+    # Call your existing build_query_command and remove its preamble.
+    query_bits_full = build_query_command(dr=dr, M=M, TRext=TRext, Sel=Sel, Session=Session, Target=Target, Q=Q)
+    # Remove the first 16 bits (which your current function uses as a simplified preamble):
+    query_bits = query_bits_full[16:]
+    
+    # Concatenate all parts:
+    full_command = pilot + rtcal_field + trcal_field + query_bits
+    return full_command
+
+def build_query_command(dr=0, M=2, TRext=0, Sel=0, Session=0, Target=0, Q=4):
     """
     Constructs a complete EPC Gen2 Query command with CRC-5, allowing Miller encoding.
 
@@ -88,8 +125,9 @@ def transmit_query_pluto(sdr, query_bits, bit_rate=40e3):
     # Generate the PIE waveform for the Query command
     waveform = encode_pie(query_bits, sdr.sample_rate)
     t = np.arange(len(waveform)) / sdr.sample_rate
-    carrier_frequency = 100e3  # Subcarrier freq, PlutoSDR will upconvert to tx_lo value
-    modulated_waveform = waveform * np.cos(2 * np.pi * carrier_frequency * t)  # TODO test if subcarrier is useful or not
+    #carrier_frequency = 100e3  # Subcarrier freq, PlutoSDR will upconvert to tx_lo value
+    #modulated_waveform = waveform * np.cos(2 * np.pi * carrier_frequency * t)  # TODO test if subcarrier is useful or not
+    modulated_waveform = waveform  # chat says modulation waveform irrelevant
 
     # Allow transmission for a brief period
     tari = 1 / bit_rate
@@ -101,32 +139,37 @@ def transmit_query_pluto(sdr, query_bits, bit_rate=40e3):
 
     # if debug:
     #     plot_generic_signal("PIE Encoded Query TX", modulated_waveform)
-
-    # Transmit the waveform
-    # raw_signal_a = sdr.rx()
-    # sdr.rx_destroy_buffer()
-    # time.sleep(2)
     
-    # raw_signal_b = sdr.rx()  # captures points = to buffer size
-    # sdr.rx_destroy_buffer()
+    # A - signal before transmission
+    raw_signal_a = sdr.rx()  # captures points = to buffer size
+    sdr.rx_destroy_buffer()
 
     sdr.tx([modulated_waveform, np.zeros_like(modulated_waveform)])  # Send waveform (both channels enabled)
-    #time.sleep(150e-6)
-    # if debug:
-    #     for i in range(20):  
-    #         # let Pluto run for a bit, to do all its calibrations
-    #         raw_signal_c = sdr.rx()  # captures points = to buffer size
-    #     sdr.rx_destroy_buffer()
+
+    # B - signal after transmission
+    time.sleep(500e-6)
+    raw_signal_b = sdr.rx()  # captures points = to buffer size
+    sdr.rx_destroy_buffer()
 
     time.sleep(tx_time * 1.1)  # Transmit for transmit time with some extra buffer room
+
+
     sdr.tx_destroy_buffer()  # Stop transmission
 
-    time.sleep(400e-6)  # 200 µs delay for SDR mode switch
+    if debug:  # C - message immediately after transmission
+        raw_signal_c = sdr.rx()  # captures points = to buffer size
+        sdr.rx_destroy_buffer()
 
-    #if debug:
-        #plot_generic_signal('raw_signal_a (rx)', raw_signal_a, sdr.sample_rate)
-        #plot_generic_signal('raw_signal_b (rx)', raw_signal_b, sdr.sample_rate)
-        #plot_generic_signal('raw_signal_c (rx)', raw_signal_c, sdr.sample_rate)
+    time.sleep(400e-6)  # 200 µs delay for SDR mode switch
+    if debug:
+        raw_signal_d = sdr.rx() # D - delayed raw signal (needs to also wait through RX from above)
+        sdr.rx_destroy_buffer()
+
+    if debug:
+        plot_generic_signal('raw_signal_a (rx)', raw_signal_a, sdr.sample_rate)
+        plot_generic_signal('raw_signal_b (rx)', raw_signal_b, sdr.sample_rate)
+        plot_generic_signal('raw_signal_c (rx)', raw_signal_c, sdr.sample_rate)
+        plot_generic_signal('raw_signal_d (rx)', raw_signal_d, sdr.sample_rate)
 
     print("Query command transmitted.")
 
@@ -143,17 +186,10 @@ def receive_rn16_pluto(sdr):
     Returns:
         np.array: Captured raw signal samples.
     """
-    # if debug:
-    #     for i in range(20):  
-    #         # let Pluto run for a bit, to do all its calibrations
-    #         raw_signal_d = sdr.rx()  # captures points = to buffer size
-    #     sdr.rx_destroy_buffer()
-    raw_signal_d = sdr.rx()
-    if debug:
-        plot_generic_signal('raw_signal_d (rx)', raw_signal_d, sdr.sample_rate)
+    raw_signal = sdr.rx()
 
     print("RN16 Response Captured!")
-    return raw_signal_d
+    return raw_signal
 
 def preprocess_signal(raw_signal, threshold=None):
     """
@@ -442,9 +478,9 @@ def plot_received_signal(signal, sample_rate, bit_rate=40e3):
 # Step 0: Free parameters and SDR setup
 sample_rate = 10e6
 center_freq = 915e6
-tx_gain = -10
+tx_gain = 0
 rx_gain = 60
-capture_time = 10e-3  # amount of time to capture in seconds
+capture_time = 1e-3  # amount of time to capture in seconds
 
 sdr = adi.ad9361(uri='ip:192.168.2.1')
 sdr.sample_rate = int(sample_rate + 1)  # Set sample rate to nearest hardware supported rate
@@ -452,7 +488,7 @@ sdr.gain_control_mode = "manual"
 
 sdr.tx_lo = int(center_freq)  # Set transmission frequency (915 MHz for UHF RFID)
 sdr.tx_hardwaregain_chan0 = tx_gain  # Adjust TX gain
-sdr.tx_cyclic_buffer = False  # Enable / disable cyclic transmission
+sdr.tx_cyclic_buffer = True  # Enable / disable cyclic transmission
 
 sdr.rx_lo = int(center_freq)  # Set receive frequency (915 MHz for UHF RFID)
 sdr.rx_hardwaregain_chan0 = rx_gain  # Adjust RX gain
@@ -460,12 +496,11 @@ sdr.rx_enabled_channels = [0]  # TODO only using one channel for now
 sdr.rx_buffer_size = int(sample_rate * capture_time)
 
 # Step 1: Transmit query command
-query_command = build_query_command(dr=1, M=4, TRext=0, Sel=0, Session=1, Target=1, Q=4)
+query_command = build_complete_query_command(dr=0, M=4, TRext=0, Sel=0, Session=0, Target=0, Q=4)
 print("Query Command with Miller M=4:", query_command)
 transmit_query_pluto(sdr, query_command)
 
 # Step 2: Capture RN16 response
-#time.sleep(50e-6)  # 200 µs delay for SDR mode switch
 raw_signal = receive_rn16_pluto(sdr)
 
 # Step 3: Decode the received signal
