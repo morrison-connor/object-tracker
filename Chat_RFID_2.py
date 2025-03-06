@@ -111,22 +111,22 @@ def transmit_query_pluto(sdr, query_bits, bit_rate=40e3):
     # sdr.rx_destroy_buffer()
 
     sdr.tx([modulated_waveform, np.zeros_like(modulated_waveform)])  # Send waveform (both channels enabled)
-    time.sleep(150e-6)
-
-    for i in range(20):  
-        # let Pluto run for a bit, to do all its calibrations
-        raw_signal_c = sdr.rx()  # captures points = to buffer size
-    sdr.rx_destroy_buffer()
+    #time.sleep(150e-6)
+    # if debug:
+    #     for i in range(20):  
+    #         # let Pluto run for a bit, to do all its calibrations
+    #         raw_signal_c = sdr.rx()  # captures points = to buffer size
+    #     sdr.rx_destroy_buffer()
 
     time.sleep(tx_time * 1.1)  # Transmit for transmit time with some extra buffer room
     sdr.tx_destroy_buffer()  # Stop transmission
 
-    time.sleep(150e-6)  # 200 µs delay for SDR mode switch
+    time.sleep(400e-6)  # 200 µs delay for SDR mode switch
 
-    if debug:
+    #if debug:
         #plot_generic_signal('raw_signal_a (rx)', raw_signal_a, sdr.sample_rate)
         #plot_generic_signal('raw_signal_b (rx)', raw_signal_b, sdr.sample_rate)
-        plot_generic_signal('raw_signal_c (rx)', raw_signal_c, sdr.sample_rate)
+        #plot_generic_signal('raw_signal_c (rx)', raw_signal_c, sdr.sample_rate)
 
     print("Query command transmitted.")
 
@@ -143,10 +143,12 @@ def receive_rn16_pluto(sdr):
     Returns:
         np.array: Captured raw signal samples.
     """
-    for i in range(20):  
-        # let Pluto run for a bit, to do all its calibrations
-        raw_signal_d = sdr.rx()  # captures points = to buffer size
-    sdr.rx_destroy_buffer()
+    # if debug:
+    #     for i in range(20):  
+    #         # let Pluto run for a bit, to do all its calibrations
+    #         raw_signal_d = sdr.rx()  # captures points = to buffer size
+    #     sdr.rx_destroy_buffer()
+    raw_signal_d = sdr.rx()
     if debug:
         plot_generic_signal('raw_signal_d (rx)', raw_signal_d, sdr.sample_rate)
 
@@ -442,7 +444,7 @@ sample_rate = 10e6
 center_freq = 915e6
 tx_gain = -10
 rx_gain = 60
-capture_time = 5e-3
+capture_time = 10e-3  # amount of time to capture in seconds
 
 sdr = adi.ad9361(uri='ip:192.168.2.1')
 sdr.sample_rate = int(sample_rate + 1)  # Set sample rate to nearest hardware supported rate
@@ -463,7 +465,7 @@ print("Query Command with Miller M=4:", query_command)
 transmit_query_pluto(sdr, query_command)
 
 # Step 2: Capture RN16 response
-time.sleep(50e-6)  # 200 µs delay for SDR mode switch
+#time.sleep(50e-6)  # 200 µs delay for SDR mode switch
 raw_signal = receive_rn16_pluto(sdr)
 
 # Step 3: Decode the received signal
