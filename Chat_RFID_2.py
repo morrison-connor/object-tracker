@@ -335,7 +335,7 @@ def validate_rn16(rn16, received_crc):
     computed_crc = compute_crc16(rn16)
     return computed_crc == received_crc
 
-def encode_pie(command_bits, sample_rate, bitrate=40e3, high=2**14, low=0):
+def encode_pie(command_bits, bitrate=40e3, high=2**14, low=0):
     """
     Encodes an EPC Gen2 command using Pulse Interval Encoding (PIE).
 

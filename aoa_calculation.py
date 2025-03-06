@@ -96,7 +96,7 @@ rx_gain0 = 40
 rx_gain1 = 40
 tx_lo = rx_lo
 tx_gain = -3
-fc0 = int(600e3)
+fc0 = int(200e3)
 
 ''' Set distance between Rx antennas '''
 wavelength = 3E8/rx_lo              # wavelength of the RF carrier
@@ -326,6 +326,34 @@ def plot_and_estimate_phase(signal1, signal2, sample_rate, title1="Signal 1", ti
 
     return phase_diff_deg
 
+def plot_values(data, title="Plot", xlabel="Index", ylabel="Value", line_style='-o'):
+    """
+    Plots values from a NumPy array or a list using matplotlib.
+
+    Parameters:
+        data (list or np.ndarray): List or NumPy array of numerical values to plot.
+        title (str): Title of the plot (default: "Plot").
+        xlabel (str): Label for the x-axis (default: "Index").
+        ylabel (str): Label for the y-axis (default: "Value").
+        line_style (str): Line style for the plot (default: '-o').
+    """
+    if not isinstance(data, (list, np.ndarray)):
+        raise ValueError("Input data must be a list or a NumPy array of numerical values.")
+
+    # Convert list to NumPy array if necessary
+    data = np.asarray(data)
+
+    if not np.issubdtype(data.dtype, np.number):
+        raise ValueError("Input data must contain numerical values.")
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(data, line_style, markersize=5, linewidth=2)
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.grid(True)
+    plt.show()
+
 # Global flag for pause state
 paused = False
 
@@ -363,7 +391,7 @@ p1.hideAxis('bottom')
 p1.hideAxis('left')
 p1.setXRange(-1, 1)
 p1.setYRange(-1, 1)
-p1.setTitle('Monopulse Tracking: Compass View', **{'color': '#FFF', 'size': '14pt'})
+p1.setTitle('Signal Tracking Compass', **{'color': '#FFF', 'size': '14pt'})
 
 # Circle for compass boundary
 circle = QtWidgets.QGraphicsEllipseItem(-1, -1, 2, 2)
@@ -371,7 +399,7 @@ circle.setPen(pg.mkPen('w'))
 p1.addItem(circle)
 
 # Line to indicate the steering angle
-line = pg.PlotDataItem()
+line = pg.PlotDataItem(pen=pg.mkPen(width=10))
 p1.addItem(line)
 
 '''Time domain plots'''
@@ -426,8 +454,7 @@ def update_compass():
     line.setData(x, y)
 
     phase_cal_label.setText(f"Phase Calibration:\t{phase_cal:.2f}°")
-    phase_delay_pre_label.setText(f"Phase Delay Before Cal:\t{delay-phase_cal:.2f}°")
-    phase_delay_label.setText(f"Phase Delay After Cal:\t{delay:.2f}°")
+    phase_delay_label.setText(f"Phase Delay Cal:\t{delay:.2f}°")
     steer_angle_label.setText(f"Steering Angle:\t{aoa:.2f}°")
 
     # --- Update the time-domain plots using pyqtgraph ---
@@ -469,17 +496,14 @@ if __name__ == '__main__':
     pauseButton.clicked.connect(toggle_pause)
     
     phase_cal_label = QtWidgets.QLabel("Phase Calibration: 0.00°")  # Initialize label
-    phase_delay_pre_label = QtWidgets.QLabel("Average Pre Phase Delay: 0.00°")  # Initialize label
     phase_delay_label = QtWidgets.QLabel("Average Phase Delay: 0.00°")  # Initialize label
     steer_angle_label = QtWidgets.QLabel("Steering Angle: 0.00°")  # Initialize label
     
-
     # Add the elements to the window layout
     layout = QtWidgets.QVBoxLayout()
     layout.addWidget(button)
     layout.addWidget(pauseButton)      # add the pause/play button
     layout.addWidget(phase_cal_label)
-    layout.addWidget(phase_delay_pre_label)
     layout.addWidget(phase_delay_label)
     layout.addWidget(steer_angle_label)
     
