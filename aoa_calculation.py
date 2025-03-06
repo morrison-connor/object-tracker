@@ -402,6 +402,15 @@ p1.addItem(circle)
 line = pg.PlotDataItem(pen=pg.mkPen(width=10))
 p1.addItem(line)
 
+# NEW: Create a TextItem for the steering angle.
+# This will be placed on top of the compass circle (adjust position as needed).
+steeringAngleText = pg.TextItem(text="Steering Angle: 0°", color='w', anchor=(0.5,0))
+# Place the text at (0, -0.1) so that it is just below the line pointing to 0°.
+steeringAngleText.setPos(0, -0.3)
+p1.addItem(steeringAngleText)
+font = QtGui.QFont("Arial", 32,)
+steeringAngleText.setFont(font)
+
 '''Time domain plots'''
 # Create a new GraphicsLayoutWidget for time-domain plots
 timePlotWidget = pg.GraphicsLayoutWidget()
@@ -453,9 +462,11 @@ def update_compass():
     y = [0, np.sin(disp_aoa_rad)]
     line.setData(x, y)
 
-    phase_cal_label.setText(f"Phase Calibration:\t{phase_cal:.2f}°")
-    phase_delay_label.setText(f"Phase Delay Cal:\t{delay:.2f}°")
-    steer_angle_label.setText(f"Steering Angle:\t{aoa:.2f}°")
+ #  phase_cal_label.setText(f"Phase Calibration:")
+    phase_cal_num.setText(f"{phase_cal:.2f}°")
+ #   phase_delay_label.setText(f"Average Phase Delay:")
+    phase_delay_num.setText(f"{delay:.2f}°")
+    steeringAngleText.setText(f"AOA: {aoa:.2f}°")
 
     # --- Update the time-domain plots using pyqtgraph ---
     # Acquire new block of Rx data
@@ -495,17 +506,25 @@ if __name__ == '__main__':
     pauseButton = QtWidgets.QPushButton("Pause")
     pauseButton.clicked.connect(toggle_pause)
     
-    phase_cal_label = QtWidgets.QLabel("Phase Calibration: 0.00°")  # Initialize label
-    phase_delay_label = QtWidgets.QLabel("Average Phase Delay: 0.00°")  # Initialize label
-    steer_angle_label = QtWidgets.QLabel("Steering Angle: 0.00°")  # Initialize label
+    phase_cal_label = QtWidgets.QLabel("Phase Calibration:")  # Initialize label
+    phase_cal_label.setStyleSheet("font-size: 14pt;")
+    phase_cal_num = QtWidgets.QLabel("0.00°")
+    phase_cal_num.setStyleSheet("font-size: 32pt;")
+    phase_delay_label = QtWidgets.QLabel("Average Phase Delay:")  # Initialize label
+    phase_delay_label.setStyleSheet("font-size: 14pt;")
+    phase_delay_num = QtWidgets.QLabel("0.00°")
+    phase_delay_num.setStyleSheet("font-size: 32pt;")
+    #steer_angle_label = QtWidgets.QLabel("Steering Angle: 0.00°")  # Initialize label
     
     # Add the elements to the window layout
     layout = QtWidgets.QVBoxLayout()
     layout.addWidget(button)
     layout.addWidget(pauseButton)      # add the pause/play button
     layout.addWidget(phase_cal_label)
+    layout.addWidget(phase_cal_num)
     layout.addWidget(phase_delay_label)
-    layout.addWidget(steer_angle_label)
+    layout.addWidget(phase_delay_num)
+    #layout.addWidget(steer_angle_label)
     
     # Create a widget to contain the plot and button, and set the layout
     container = QtWidgets.QWidget()
