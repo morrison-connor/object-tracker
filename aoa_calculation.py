@@ -90,7 +90,7 @@ angle_window_size = 6
 '''Setup'''
 samp_rate = 30e6    # must be <=30.72 MHz if both channels are enabled
 NumSamples = 2**10
-rx_lo = 915e6 #2.3e9
+rx_lo = 2.3e9
 rx_mode = "manual"  # can be "manual" or "slow_attack"
 rx_gain0 = 40
 rx_gain1 = 40
@@ -131,7 +131,7 @@ t = np.arange(0, N * ts, ts)
 i0 = np.cos(2 * np.pi * t * fc0) * 2 ** 14
 q0 = np.sin(2 * np.pi * t * fc0) * 2 ** 14
 iq0 = i0 + 1j * q0
-sdr.tx([iq0,iq0])  # Send Tx data.
+#sdr.tx([iq0,iq0])  # Send Tx data.
 
 # Assign frequency bins and "zoom in" to the fc0 signal on those frequency bins
 xf = np.fft.fftfreq(NumSamples, ts)
@@ -187,7 +187,7 @@ def scan_for_DOA(phase_cal_input):
     monopulse_phase = []
     if DEBUG:
         #plot_signals("Rx_0", Rx_0, sdr.sample_rate)
-        #plot_signals(sdr.sample_rate, Rx_0=Rx_0, Rx_1=Rx_1)
+        plot_signals(sdr.sample_rate, Rx_0=Rx_0, Rx_1=Rx_1)
         plot_and_estimate_phase(Rx_0, Rx_1, sdr.sample_rate, "Rx_0", "Rx_1")
     delay_phases = np.arange(-phase_delay_range, phase_delay_range, 2)    # phase delay in degrees
     for phase_delay in delay_phases:   
