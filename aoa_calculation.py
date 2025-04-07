@@ -84,12 +84,12 @@ phase_cal = 0  # change this based on calibration to the phase shift value when 
 d_wavelength = 0.50  # distance between elements as a fraction of wavelength.  This is normally 0.5
 phase_delay_range = 180  # set to 180 or 90 depending on 1/2 or 1/4 wavelength respectively
 phase_cal_window_size = 10
-phase_window_size = 5
-angle_window_size = 6
+phase_window_size = 3
+angle_window_size = 4
 
 '''Setup'''
 samp_rate = 30e6    # must be <=30.72 MHz if both channels are enabled
-NumSamples = 2**10
+NumSamples = 2**12
 rx_lo = 2.3e9
 rx_mode = "manual"  # can be "manual" or "slow_attack"
 rx_gain0 = 40
@@ -447,6 +447,7 @@ def update_compass():
     tracking_angles = tracking_angles[1:]  # remove oldest measurement
     tracking_angles_inliers = remove_outliers(tracking_angles)
     aoa = np.mean(tracking_angles_inliers)
+    aoa = -1 * aoa  # flip based on new antenna config
 
     if DEBUG:
         print(f"Tracking angles:\n{tracking_angles}")
@@ -466,7 +467,7 @@ def update_compass():
     phase_cal_num.setText(f"{phase_cal:.2f}°")
  #   phase_delay_label.setText(f"Average Phase Delay:")
     phase_delay_num.setText(f"{delay:.2f}°")
-    steeringAngleText.setText(f"AOA: {aoa:.2f}°")
+    steeringAngleText.setText(f"{aoa:.2f}°")
 
     # --- Update the time-domain plots using pyqtgraph ---
     # Acquire new block of Rx data
